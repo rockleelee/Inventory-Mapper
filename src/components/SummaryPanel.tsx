@@ -1,5 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { CellData, MaterialSummary, cellHasContent } from '../types';
+import {
+    CellData,
+    MaterialSummary,
+    cellHasContent,
+    getMaterialColor,
+    getCombinedCode,
+} from '../types';
 
 interface SummaryPanelProps {
     cells: Map<string, CellData>;
@@ -15,22 +21,26 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
     const [sortBy, setSortBy] = useState<'code' | 'quantity' | 'count'>('code');
     const [sortAsc, setSortAsc] = useState(true);
 
-    // Aggregate materials from all cells
+    // Aggregate materials from all cells (synchronous, pure function)
     const summaries = useMemo(() => {
         const materialMap = new Map<string, MaterialSummary>();
 
         cells.forEach((cell) => {
-            if (!cellHasContent(cell) || !cell.materialCode) return;
+            if (!cellHasContent(cell) || !cell.code1) return;
 
-            const existing = materialMap.get(cell.materialCode);
+            const combinedCode = getCombinedCode(cell);
+            const existing = materialMap.get(combinedCode);
+
             if (existing) {
                 existing.totalQuantity += cell.quantity;
                 existing.cellCount += 1;
             } else {
-                materialMap.set(cell.materialCode, {
-                    materialCode: cell.materialCode,
+                materialMap.set(combinedCode, {
+                    code1: cell.code1,
+                    code2: cell.code2,
+                    code3: cell.code3,
+                    combinedCode,
                     totalQuantity: cell.quantity,
-                    color: cell.color,
                     cellCount: 1,
                 });
             }
@@ -43,7 +53,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
             let comparison = 0;
             switch (sortBy) {
                 case 'code':
-                    comparison = a.materialCode.localeCompare(b.materialCode);
+                    comparison = a.combinedCode.localeCompare(b.combinedCode);
                     break;
                 case 'quantity':
                     comparison = a.totalQuantity - b.totalQuantity;
@@ -118,21 +128,32 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
                                 No materials recorded yet
                             </div>
                         ) : (
-                            summaries.map((summary) => (
-                                <div key={summary.materialCode} className="summary-item">
-                                    <div
-                                        className="material-indicator"
-                                        style={{ backgroundColor: summary.color }}
-                                    />
-                                    <div className="material-info">
-                                        <span className="material-code">{summary.materialCode}</span>
-                                        <span className="cell-count">{summary.cellCount} cell{summary.cellCount > 1 ? 's' : ''}</span>
+                            summaries.map((summary) => {
+                                // Get color dynamically from code1
+                                const materialColor = getMaterialColor(summary.code1);
+                                return (
+                                    <div key={summary.combinedCode} className="summary-item">
+                                        <div
+                                            className="material-indicator"
+                                            style={{ backgroundColor: materialColor.primary }}
+                                        />
+                                        <div className="material-info">
+                                            <span
+                                                className="material-code"
+                                                style={{ color: materialColor.primary }}
+                                            >
+                                                {summary.combinedCode}
+                                            </span>
+                                            <span className="cell-count">
+                                                {summary.cellCount} cell{summary.cellCount > 1 ? 's' : ''}
+                                            </span>
+                                        </div>
+                                        <div className="material-quantity">
+                                            {summary.totalQuantity}
+                                        </div>
                                     </div>
-                                    <div className="material-quantity">
-                                        {summary.totalQuantity}
-                                    </div>
-                                </div>
-                            ))
+                                );
+                            })
                         )}
                     </div>
                 </div>

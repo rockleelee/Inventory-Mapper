@@ -1,5 +1,7 @@
 /* ===== CSS Reset & Base ===== */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -11,41 +13,41 @@
   --bg-secondary: #16213e;
   --bg-tertiary: #0f3460;
   --bg-elevated: #2d3561;
-  
+
   /* Text colors */
   --text-primary: #e8e8e8;
   --text-secondary: #a0a0a0;
   --text-muted: #6b6b6b;
-  
+
   /* Accent colors */
   --accent-primary: #4ECDC4;
   --accent-secondary: #45B7D1;
   --accent-warning: #ffc107;
   --accent-danger: #FF6B6B;
   --accent-success: #96CEB4;
-  
+
   /* Spacing */
   --spacing-xs: 4px;
   --spacing-sm: 8px;
   --spacing-md: 16px;
   --spacing-lg: 24px;
   --spacing-xl: 32px;
-  
+
   /* Border radius */
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
-  
+
   /* Shadows */
   --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
-  
+
   /* Transitions */
   --transition-fast: 150ms ease;
   --transition-normal: 250ms ease;
-  
+
   /* Typography */
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-size-xs: 10px;
@@ -56,7 +58,8 @@
   --font-size-2xl: 24px;
 }
 
-html, body {
+html,
+body {
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -132,7 +135,8 @@ body {
   transition: background var(--transition-fast);
 }
 
-.menu-btn:hover, .menu-btn:active {
+.menu-btn:hover,
+.menu-btn:active {
   background: var(--bg-tertiary);
 }
 
@@ -161,6 +165,7 @@ body {
     opacity: 0;
     transform: translateY(-8px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -182,7 +187,8 @@ body {
   transition: background var(--transition-fast);
 }
 
-.dropdown-menu button:hover, .dropdown-menu button:active {
+.dropdown-menu button:hover,
+.dropdown-menu button:active {
   background: var(--bg-tertiary);
 }
 
@@ -301,7 +307,8 @@ body {
   transition: all var(--transition-fast);
 }
 
-.summary-sort button:hover, .summary-sort button.active {
+.summary-sort button:hover,
+.summary-sort button.active {
   background: var(--accent-primary);
   color: var(--bg-primary);
 }
@@ -375,8 +382,13 @@ body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 /* ===== Cell Editor ===== */
@@ -396,6 +408,7 @@ body {
     opacity: 0;
     transform: translateY(20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -625,6 +638,169 @@ body {
   transform: scale(0.98);
 }
 
+/* ===== Material Code Editor Styles ===== */
+.editor-header-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.material-code-inputs {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.code-input-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.code1-wrapper {
+  flex: 0 0 80px;
+}
+
+.code2-wrapper {
+  flex: 0 0 70px;
+}
+
+.code3-wrapper {
+  flex: 1;
+}
+
+.code1-select,
+.code2-select {
+  width: 100%;
+  height: 48px;
+  padding: var(--spacing-sm);
+  background: var(--bg-tertiary);
+  border: 2px solid var(--bg-elevated);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all var(--transition-fast);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a0a0a0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+}
+
+.code1-select:focus,
+.code2-select:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.code1-select option,
+.code2-select option {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-weight: 600;
+  padding: var(--spacing-sm);
+}
+
+.code3-input {
+  width: 100%;
+  height: 48px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-tertiary);
+  border: 2px solid var(--bg-elevated);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  text-transform: uppercase;
+  transition: border-color var(--transition-fast);
+}
+
+.code3-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.code3-input::placeholder {
+  color: var(--text-muted);
+  font-weight: 400;
+  text-transform: none;
+}
+
+/* Quantity input with calculator buttons */
+.quantity-input {
+  display: flex;
+  align-items: stretch;
+  gap: var(--spacing-xs);
+}
+
+.quantity-input input,
+.quantity-display {
+  flex: 1;
+  height: 48px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-tertiary);
+  border: 2px solid var(--bg-elevated);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  text-align: center;
+  transition: border-color var(--transition-fast);
+}
+
+.quantity-input input:focus,
+.quantity-display:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.quantity-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background: var(--accent-primary);
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--bg-primary);
+  font-size: var(--font-size-2xl);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+
+.quantity-btn:hover {
+  background: var(--accent-secondary);
+}
+
+.quantity-btn:active {
+  transform: scale(0.95);
+}
+
+/* Note textarea - always visible */
+.note-textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: var(--spacing-md);
+  background: transparent;
+  border: 2px solid var(--accent-primary);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-md);
+  resize: vertical;
+}
+
+.note-textarea:focus {
+  outline: none;
+  border-color: var(--accent-secondary);
+}
+
 /* ===== Loading Screen ===== */
 .loading-screen {
   display: flex;
@@ -647,7 +823,9 @@ body {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ===== Scrollbar Styling ===== */
@@ -674,16 +852,16 @@ body {
   .toolbar {
     height: 40px;
   }
-  
+
   .cell-editor {
     max-height: 95vh;
   }
-  
+
   .editor-content {
     padding: var(--spacing-md);
     max-height: calc(95vh - 120px);
   }
-  
+
   .form-group {
     margin-bottom: var(--spacing-md);
   }
@@ -699,6 +877,7 @@ body {
 
 /* ===== Touch Feedback ===== */
 @media (hover: none) {
+
   .menu-btn:active,
   .dropdown-menu button:active,
   .summary-toggle:active,

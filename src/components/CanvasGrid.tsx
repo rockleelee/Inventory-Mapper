@@ -9,6 +9,8 @@ import {
     getColumnLabel,
     getCellKey,
     cellHasContent,
+    getMaterialColor,
+    getCombinedCode,
 } from '../types';
 
 interface CanvasGridProps {
@@ -16,6 +18,12 @@ interface CanvasGridProps {
     cells: Map<string, CellData>;
     onCellTap: (row: number, col: number) => void;
     onCellDrop: (sourceRow: number, sourceCol: number, targetRow: number, targetCol: number) => void;
+}
+
+interface VerticalGroup {
+    col: number;
+    startRow: number;
+    endRow: number;
 }
 
 const LONG_PRESS_DURATION = 500; // ms
@@ -104,6 +112,64 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
         }
     };
 
+    // Detect vertical groups - SPATIAL ONLY (not based on material code)
+    // Groups cells that are vertically adjacent in the same column, regardless of content
+    const detectVerticalGroups = useCallback((): VerticalGroup[] => {
+        const groups: VerticalGroup[] = [];
+
+        // Group cells by column
+        const cellsByCol = new Map<number, number[]>(); // col -> sorted row numbers
+        cells.forEach((cell) => {
+            if (!cellHasContent(cell)) return;
+            const rows = cellsByCol.get(cell.col) || [];
+            rows.push(cell.row);
+            cellsByCol.set(cell.col, rows);
+        });
+
+        // Process each column to find consecutive groups
+        cellsByCol.forEach((rows, col) => {
+            if (rows.length < 2) return;
+
+            // Sort rows
+            rows.sort((a, b) => a - b);
+
+            let groupStart = rows[0];
+            let lastRow = rows[0];
+
+            for (let i = 1; i < rows.length; i++) {
+                const currentRow = rows[i];
+
+                if (currentRow === lastRow + 1) {
+                    // Continue group (adjacent)
+                    lastRow = currentRow;
+                } else {
+                    // End current group if it has 2+ cells
+                    if (lastRow > groupStart) {
+                        groups.push({
+                            col,
+                            startRow: groupStart,
+                            endRow: lastRow,
+                        });
+                    }
+                    // Start new group
+                    groupStart = currentRow;
+                    lastRow = currentRow;
+                }
+            }
+
+            // Don't forget last group
+            if (lastRow > groupStart) {
+                groups.push({
+                    col,
+                    startRow: groupStart,
+                    endRow: lastRow,
+                });
+            }
+        });
+
+        return groups;
+    }, [cells]);
+
     // Handle pointer down
     const handlePointerDown = useCallback((e: React.PointerEvent) => {
         e.preventDefault();
@@ -126,10 +192,8 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
         const pointerCount = pointersRef.current.size;
 
         if (pointerCount === 1) {
-            // Single pointer - could be tap, pan, or long press
             gestureStateRef.current = 'idle';
 
-            // Start long press timer
             const gridPos = screenToGrid(e.clientX, e.clientY);
             if (gridPos) {
                 longPressTimerRef.current = window.setTimeout(() => {
@@ -142,7 +206,6 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                         if (distance < TAP_THRESHOLD) {
                             gestureStateRef.current = 'longPress';
 
-                            // Get cell data for dragging
                             const key = getCellKey(gridPos.row, gridPos.col);
                             const cell = cells.get(key);
 
@@ -157,7 +220,6 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                                     currentY: e.clientY,
                                 });
 
-                                // Haptic feedback on supported devices
                                 if (navigator.vibrate) {
                                     navigator.vibrate(50);
                                 }
@@ -167,7 +229,6 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                 }, LONG_PRESS_DURATION);
             }
         } else if (pointerCount === 2) {
-            // Two pointers - start pinch zoom
             clearLongPressTimer();
             gestureStateRef.current = 'zooming';
 
@@ -190,7 +251,6 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
 
         if (pointerCount === 1) {
             if (gestureStateRef.current === 'dragging') {
-                // Update drag position
                 setDragState(prev => ({
                     ...prev,
                     currentX: e.clientX,
@@ -205,7 +265,6 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                     clearLongPressTimer();
                     gestureStateRef.current = 'panning';
 
-                    // Update viewport for panning
                     setViewport(prev => ({
                         ...prev,
                         offsetX: prev.offsetX + e.movementX,
@@ -214,7 +273,6 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                 }
             }
         } else if (pointerCount === 2 && gestureStateRef.current === 'zooming') {
-            // Pinch zoom
             const pointers = Array.from(pointersRef.current.values());
             const currentDistance = getPointerDistance(pointers[0], pointers[1]);
             const center = getPointerCenter(pointers[0], pointers[1]);
@@ -224,7 +282,6 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                 let newScale = initialScaleRef.current * scaleFactor;
                 newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
 
-                // Zoom towards pinch center
                 const rect = canvasRef.current?.getBoundingClientRect();
                 if (rect) {
                     const cx = center.x - rect.left;
@@ -259,7 +316,6 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
             const duration = Date.now() - pointer.startTime;
 
             if (gestureStateRef.current === 'dragging') {
-                // Handle drop
                 const targetPos = screenToGrid(e.clientX, e.clientY);
                 if (targetPos && dragState.sourceCell) {
                     onCellDrop(
@@ -279,7 +335,6 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                     currentY: 0,
                 });
             } else if (gestureStateRef.current === 'idle' && distance < TAP_THRESHOLD && duration < LONG_PRESS_DURATION) {
-                // Tap detected
                 const gridPos = screenToGrid(pointer.startX, pointer.startY);
                 if (gridPos) {
                     onCellTap(gridPos.row, gridPos.col);
@@ -292,7 +347,6 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
         if (pointersRef.current.size === 0) {
             gestureStateRef.current = 'idle';
         } else if (pointersRef.current.size === 1) {
-            // Transition from zooming back to panning
             const remaining = Array.from(pointersRef.current.values())[0];
             remaining.startX = remaining.x;
             remaining.startY = remaining.y;
@@ -392,7 +446,7 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
         }
 
         // Draw cells with content
-        ctx.textAlign = 'center';
+        ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
 
         for (let row = startRow; row < endRow; row++) {
@@ -404,28 +458,43 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                     const x = rowHeaderWidth + col * cellWidth;
                     const y = headerHeight + row * cellHeight;
 
-                    // Cell background with material color
-                    if (cell.color) {
-                        ctx.fillStyle = cell.color + '40';
-                        ctx.fillRect(x + 1, y + 1, cellWidth - 2, cellHeight - 2);
+                    // Get dynamic color from code1
+                    const materialColor = getMaterialColor(cell.code1);
 
-                        // Left color indicator
-                        ctx.fillStyle = cell.color;
-                        ctx.fillRect(x + 1, y + 1, 4, cellHeight - 2);
+                    // Cell background with darker shade of prefix color
+                    ctx.fillStyle = materialColor.background;
+                    ctx.fillRect(x + 1, y + 1, cellWidth - 2, cellHeight - 2);
+
+                    // Left color indicator bar
+                    ctx.fillStyle = materialColor.primary;
+                    ctx.fillRect(x + 1, y + 1, 4, cellHeight - 2);
+
+                    const padding = 8;
+                    const fontSize = Math.min(14, cellHeight * 0.32);
+
+                    // Top-left: Prefix + Number (e.g., S5, F5, Si10) with prefix color
+                    const combinedLabel = cell.code1 + cell.code2;
+                    if (combinedLabel) {
+                        ctx.fillStyle = materialColor.primary;
+                        ctx.font = `bold ${fontSize}px Inter, sans-serif`;
+                        ctx.textAlign = 'left';
+                        ctx.fillText(combinedLabel, x + padding, y + cellHeight * 0.3);
                     }
 
-                    // Material code text
-                    if (cell.materialCode) {
+                    // Top-right: Suffix (e.g., PIM, STEEL) in white
+                    if (cell.code3) {
                         ctx.fillStyle = '#e8e8e8';
-                        ctx.font = `bold ${Math.min(14, cellHeight * 0.35)}px Inter, sans-serif`;
-                        ctx.fillText(cell.materialCode, x + cellWidth / 2, y + cellHeight * 0.35);
+                        ctx.font = `${fontSize}px Inter, sans-serif`;
+                        ctx.textAlign = 'right';
+                        ctx.fillText(cell.code3, x + cellWidth - padding, y + cellHeight * 0.3);
                     }
 
-                    // Quantity text
+                    // Bottom: Quantity value (centered)
                     if (cell.quantity > 0) {
-                        ctx.fillStyle = '#a0a0a0';
-                        ctx.font = `${Math.min(12, cellHeight * 0.3)}px Inter, sans-serif`;
-                        ctx.fillText(String(cell.quantity), x + cellWidth / 2, y + cellHeight * 0.7);
+                        ctx.fillStyle = '#c0c0c0';
+                        ctx.font = `${Math.min(13, cellHeight * 0.28)}px Inter, sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText(String(cell.quantity), x + cellWidth / 2, y + cellHeight * 0.72);
                     }
 
                     // Note indicator (small triangle in corner)
@@ -440,6 +509,18 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                     }
                 }
             }
+        }
+
+        // Draw vertical grouping frames (SPATIAL ONLY - any adjacent cells in same column)
+        const groups = detectVerticalGroups();
+        for (const group of groups) {
+            const x = rowHeaderWidth + group.col * cellWidth;
+            const y = headerHeight + group.startRow * cellHeight;
+            const groupHeight = (group.endRow - group.startRow + 1) * cellHeight;
+
+            ctx.strokeStyle = '#FFD600'; // Yellow outline
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x, y, cellWidth, groupHeight);
         }
 
         ctx.restore();
@@ -502,10 +583,12 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
             const dx = dragState.currentX - rect.left;
             const dy = dragState.currentY - rect.top;
 
+            const dragColor = getMaterialColor(dragState.sourceCell.code1);
+
             ctx.save();
             ctx.globalAlpha = 0.8;
 
-            ctx.fillStyle = dragState.sourceCell.color || '#4ECDC4';
+            ctx.fillStyle = dragColor.primary;
             ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
             ctx.shadowBlur = 10;
             ctx.fillRect(
@@ -520,7 +603,7 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
             ctx.font = `bold ${14 * scale}px Inter, sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(dragState.sourceCell.materialCode, dx, dy - 5 * scale);
+            ctx.fillText(getCombinedCode(dragState.sourceCell), dx, dy - 5 * scale);
 
             ctx.font = `${12 * scale}px Inter, sans-serif`;
             ctx.fillText(String(dragState.sourceCell.quantity), dx, dy + 10 * scale);
@@ -544,7 +627,7 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                 ctx.restore();
             }
         }
-    }, [viewport, config, cells, dragState, screenToGrid]);
+    }, [viewport, config, cells, dragState, screenToGrid, detectVerticalGroups]);
 
     // Resize canvas to fit container
     useEffect(() => {

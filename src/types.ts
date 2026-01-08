@@ -2,10 +2,12 @@
 export interface CellData {
     row: number;
     col: number;
-    materialCode: string;
+    code1: string;     // Material Code 1 (e.g., "S", "Si", "F")
+    code2: string;     // Material Code 2 (e.g., "5", "10")
+    code3: string;     // Material Code 3 (optional, e.g., "PIM")
     quantity: number;
-    color: string;
     note: string;
+    // Color is derived from code1, NOT stored
 }
 
 // Grid position type
@@ -41,9 +43,11 @@ export type GestureState =
 
 // Material summary for aggregation
 export interface MaterialSummary {
-    materialCode: string;
+    code1: string;
+    code2: string;
+    code3: string;
+    combinedCode: string;
     totalQuantity: number;
-    color: string;
     cellCount: number;
 }
 
@@ -85,21 +89,44 @@ export const DEFAULT_GRID_CONFIG: GridConfig = {
     rowHeaderWidth: 50,
 };
 
-// Default color palette for materials
-export const MATERIAL_COLORS = [
-    '#FF6B6B', // Red
-    '#4ECDC4', // Teal
-    '#45B7D1', // Blue
-    '#96CEB4', // Green
-    '#FFEAA7', // Yellow
-    '#DDA0DD', // Plum
-    '#98D8C8', // Mint
-    '#F7DC6F', // Gold
-    '#BB8FCE', // Purple
-    '#85C1E9', // Sky
-    '#F8B500', // Amber
-    '#00CED1', // Dark Cyan
-];
+// Material Color Map - colors determined by Code1 only
+export const MATERIAL_COLOR_MAP: Record<string, { primary: string; background: string }> = {
+    S: { primary: "#00FF66", background: "#0B3A2E" },
+    F: { primary: "#FF3B3B", background: "#3A0B0B" },
+    Si: { primary: "#FFD600", background: "#3A330B" },
+    V: { primary: "#FF66CC", background: "#3A0B2A" },
+    SH: { primary: "#0B7A3B", background: "#062F1A" },
+    SP: { primary: "#FFC700", background: "#3A2F00" },
+    SJ: { primary: "#FF8C00", background: "#3A1F00" },
+    Sw: { primary: "#2EE6C5", background: "#0B3A33" },
+    SK: { primary: "#2EE6C5", background: "#0B3A33" },
+    B: { primary: "#4DA6FF", background: "#0B1F3A" },
+    TR: { primary: "#CFCFCF", background: "#2E2E2E" },
+    P: { primary: "#CFCFCF", background: "#2E2E2E" }
+};
+
+// Get material color from Code1
+export function getMaterialColor(code1: string): { primary: string; background: string } {
+    return MATERIAL_COLOR_MAP[code1] || { primary: "#888888", background: "#2E2E2E" };
+}
+
+// Get combined material code display
+export function getCombinedCode(cell: CellData): string {
+    let code = cell.code1 + cell.code2;
+    if (cell.code3) code += " " + cell.code3;
+    return code;
+}
+
+// Get combined code for grouping (code1 + code2 only)
+export function getGroupingCode(cell: CellData): string {
+    return cell.code1 + cell.code2;
+}
+
+// List of all available Code1 options for dropdown
+export const CODE1_OPTIONS = ['S', 'F', 'Si', 'V', 'SH', 'SP', 'SJ', 'Sw', 'SK', 'B', 'TR', 'P'];
+
+// List of Code2 numeric options for dropdown
+export const CODE2_OPTIONS = ['1', '2.5', '5', '10', '18', '20', '25', '50'];
 
 // Get column letter (A, B, C, ..., Z, AA, AB, ...)
 export function getColumnLabel(col: number): string {
@@ -117,9 +144,10 @@ export function createEmptyCell(row: number, col: number): CellData {
     return {
         row,
         col,
-        materialCode: '',
+        code1: '',
+        code2: '',
+        code3: '',
         quantity: 0,
-        color: '',
         note: '',
     };
 }
@@ -127,7 +155,7 @@ export function createEmptyCell(row: number, col: number): CellData {
 // Check if cell has content
 export function cellHasContent(cell: CellData | null | undefined): boolean {
     if (!cell) return false;
-    return cell.materialCode !== '' || cell.quantity > 0 || cell.note !== '';
+    return cell.code1 !== '' || cell.quantity > 0 || cell.note !== '';
 }
 
 // Generate unique cell key
