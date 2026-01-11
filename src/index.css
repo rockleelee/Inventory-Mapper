@@ -782,6 +782,19 @@ body {
   transform: scale(0.95);
 }
 
+/* Quick Number Buttons Row */
+.quick-number-row {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
+}
+
+.quick-num-btn {
+  flex: 1;
+  width: auto;
+  font-size: var(--font-size-lg);
+}
+
 /* Note textarea - always visible */
 .note-textarea {
   width: 100%;

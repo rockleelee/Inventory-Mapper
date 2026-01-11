@@ -93,12 +93,12 @@ export const DEFAULT_GRID_CONFIG: GridConfig = {
 export const MATERIAL_COLOR_MAP: Record<string, { primary: string; background: string }> = {
     S: { primary: "#00FF66", background: "#0B3A2E" },
     F: { primary: "#FF3B3B", background: "#3A0B0B" },
-    Si: { primary: "#FFD600", background: "#3A330B" },
+    SI: { primary: "#FFD600", background: "#3A330B" },
     V: { primary: "#FF66CC", background: "#3A0B2A" },
     SH: { primary: "#0B7A3B", background: "#062F1A" },
     SP: { primary: "#FFC700", background: "#3A2F00" },
     SJ: { primary: "#FF8C00", background: "#3A1F00" },
-    Sw: { primary: "#2EE6C5", background: "#0B3A33" },
+    SW: { primary: "#2EE6C5", background: "#0B3A33" },
     SK: { primary: "#2EE6C5", background: "#0B3A33" },
     B: { primary: "#4DA6FF", background: "#0B1F3A" },
     TR: { primary: "#CFCFCF", background: "#2E2E2E" },
@@ -123,7 +123,7 @@ export function getGroupingCode(cell: CellData): string {
 }
 
 // List of all available Code1 options for dropdown
-export const CODE1_OPTIONS = ['S', 'F', 'Si', 'V', 'SH', 'SP', 'SJ', 'Sw', 'SK', 'B', 'TR', 'P'];
+export const CODE1_OPTIONS = ['S', 'F', 'SI', 'V', 'SH', 'SP', 'SJ', 'SW', 'SK', 'B', 'TR', 'P'];
 
 // List of Code2 numeric options for dropdown
 export const CODE2_OPTIONS = ['1', '2.5', '5', '10', '18', '20', '25', '50'];

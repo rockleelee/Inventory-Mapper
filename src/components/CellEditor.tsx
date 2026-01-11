@@ -233,7 +233,7 @@ export const CellEditor: React.FC<CellEditorProps> = ({
         }));
 
         // Focus the input to continue typing
-        setTimeout(() => quantityInputRef.current?.focus(), 0);
+        quantityInputRef.current?.focus();
     };
 
     // Handle equals button press
@@ -261,6 +261,46 @@ export const CellEditor: React.FC<CellEditorProps> = ({
             isEnteringSecondOperand: false,
             result: String(result),
         });
+
+        // Keep focus on input
+        quantityInputRef.current?.focus();
+    };
+
+    // Handle quick number buttons (500, 1000) - append to calculator flow
+    const handleQuickNumber = (num: string) => {
+        // If we have a result, start fresh with this number
+        if (calc.result !== null) {
+            setCalc({
+                firstOperand: num,
+                secondOperand: '',
+                operator: null,
+                isEnteringSecondOperand: false,
+                result: null,
+            });
+            quantityInputRef.current?.focus();
+            return;
+        }
+
+        // If we have an operator, set as second operand
+        if (calc.operator) {
+            setCalc(prev => ({
+                ...prev,
+                secondOperand: num,
+                isEnteringSecondOperand: true,
+            }));
+            quantityInputRef.current?.focus();
+            return;
+        }
+
+        // Otherwise set as first operand
+        setCalc({
+            firstOperand: num,
+            secondOperand: '',
+            operator: null,
+            isEnteringSecondOperand: false,
+            result: null,
+        });
+        quantityInputRef.current?.focus();
     };
 
     // Handle direct keyboard input for digits
@@ -420,6 +460,8 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                             <input
                                 ref={quantityInputRef}
                                 type="text"
+                                inputMode="numeric"
+                                enterKeyHint="done"
                                 value={getDisplayValue()}
                                 onChange={handleQuantityInput}
                                 onKeyDown={handleKeyDown}
@@ -446,6 +488,23 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                                 type="button"
                             >
                                 =
+                            </button>
+                        </div>
+                        {/* Quick Number Buttons */}
+                        <div className="quick-number-row">
+                            <button
+                                type="button"
+                                className="quantity-btn quick-num-btn"
+                                onClick={() => handleQuickNumber('500')}
+                            >
+                                500
+                            </button>
+                            <button
+                                type="button"
+                                className="quantity-btn quick-num-btn"
+                                onClick={() => handleQuickNumber('1000')}
+                            >
+                                1000
                             </button>
                         </div>
                     </div>
