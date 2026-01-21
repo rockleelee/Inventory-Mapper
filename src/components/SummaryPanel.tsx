@@ -11,12 +11,14 @@ interface SummaryPanelProps {
     cells: Map<string, CellData>;
     isExpanded: boolean;
     onToggle: () => void;
+    onItemClick?: (combinedCode: string) => void;
 }
 
 export const SummaryPanel: React.FC<SummaryPanelProps> = ({
     cells,
     isExpanded,
     onToggle,
+    onItemClick,
 }) => {
     const [sortBy, setSortBy] = useState<'code' | 'quantity' | 'count'>('code');
     const [sortAsc, setSortAsc] = useState(true);
@@ -132,7 +134,11 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
                                 // Get color dynamically from code1
                                 const materialColor = getMaterialColor(summary.code1);
                                 return (
-                                    <div key={summary.combinedCode} className="summary-item">
+                                    <div
+                                        key={summary.combinedCode}
+                                        className="summary-item"
+                                        onClick={() => onItemClick?.(summary.combinedCode)}
+                                    >
                                         <div
                                             className="material-indicator"
                                             style={{ backgroundColor: materialColor.primary }}

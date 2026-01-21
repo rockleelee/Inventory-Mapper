@@ -89,6 +89,22 @@ export const DEFAULT_GRID_CONFIG: GridConfig = {
     rowHeaderWidth: 50,
 };
 
+// Buffer grid configuration (smaller grid for secondary storage)
+export const BUFFER_GRID_CONFIG: GridConfig = {
+    rows: 10,
+    cols: 10,
+    cellWidth: 70,
+    cellHeight: 36,
+    headerHeight: 24,
+    rowHeaderWidth: 40,
+};
+
+// Highlight state for summary → grid interaction
+export interface HighlightState {
+    combinedCode: string;  // The material code to highlight (e.g., "S5 PIM")
+    timestamp: number;     // When the highlight was triggered (for auto-clear)
+}
+
 // Material Color Map - colors determined by Code1 only
 export const MATERIAL_COLOR_MAP: Record<string, { primary: string; background: string }> = {
     S: { primary: "#00FF66", background: "#0B3A2E" },

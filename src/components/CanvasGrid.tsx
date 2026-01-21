@@ -18,6 +18,7 @@ interface CanvasGridProps {
     cells: Map<string, CellData>;
     onCellTap: (row: number, col: number) => void;
     onCellDrop: (sourceRow: number, sourceCol: number, targetRow: number, targetCol: number) => void;
+    highlightedCode?: string | null;
 }
 
 interface VerticalGroup {
@@ -37,6 +38,7 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
     cells,
     onCellTap,
     onCellDrop,
+    highlightedCode,
 }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -65,6 +67,49 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
         currentX: 0,
         currentY: 0,
     });
+
+    // Highlight animation state
+    const [highlightAlpha, setHighlightAlpha] = useState(0.3);
+    const highlightAnimationRef = useRef<number | null>(null);
+
+    // Highlight animation effect
+    useEffect(() => {
+        if (!highlightedCode) {
+            setHighlightAlpha(0.3);
+            if (highlightAnimationRef.current) {
+                cancelAnimationFrame(highlightAnimationRef.current);
+            }
+            return;
+        }
+
+        let startTime: number | null = null;
+        const duration = 1500; // 1.5 seconds
+
+        const animate = (timestamp: number) => {
+            if (!startTime) startTime = timestamp;
+            const elapsed = timestamp - startTime;
+            const progress = elapsed / duration;
+
+            if (progress >= 1) {
+                setHighlightAlpha(0.3);
+                return;
+            }
+
+            // Pulsing effect: 0.2 -> 0.5 -> 0.2
+            const pulse = Math.sin(progress * Math.PI * 3) * 0.15 + 0.35;
+            setHighlightAlpha(pulse);
+
+            highlightAnimationRef.current = requestAnimationFrame(animate);
+        };
+
+        highlightAnimationRef.current = requestAnimationFrame(animate);
+
+        return () => {
+            if (highlightAnimationRef.current) {
+                cancelAnimationFrame(highlightAnimationRef.current);
+            }
+        };
+    }, [highlightedCode]);
 
     // Convert screen coordinates to grid cell
     const screenToGrid = useCallback((screenX: number, screenY: number): { row: number; col: number } | null => {
@@ -507,6 +552,15 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                         ctx.closePath();
                         ctx.fill();
                     }
+
+                    // Highlight overlay if this cell matches highlighted code
+                    if (highlightedCode) {
+                        const cellCode = getCombinedCode(cell);
+                        if (cellCode === highlightedCode) {
+                            ctx.fillStyle = `rgba(255, 235, 59, ${highlightAlpha})`;
+                            ctx.fillRect(x + 1, y + 1, cellWidth - 2, cellHeight - 2);
+                        }
+                    }
                 }
             }
         }
@@ -627,7 +681,7 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                 ctx.restore();
             }
         }
-    }, [viewport, config, cells, dragState, screenToGrid, detectVerticalGroups]);
+    }, [viewport, config, cells, dragState, screenToGrid, detectVerticalGroups, highlightedCode, highlightAlpha]);
 
     // Resize canvas to fit container
     useEffect(() => {
