@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { CanvasGrid } from './components/CanvasGrid';
+import { CanvasGrid, CanvasGridHandle } from './components/CanvasGrid';
 import { CellEditor } from './components/CellEditor';
 import { SummaryPanel } from './components/SummaryPanel';
-import { BufferGridPanel } from './components/BufferGridPanel';
+import { BufferGridPanel, BufferGridPanelHandle } from './components/BufferGridPanel';
 import { Toolbar } from './components/Toolbar';
 import {
     CellData,
@@ -10,6 +10,8 @@ import {
     DEFAULT_GRID_CONFIG,
     getCellKey,
     cellHasContent,
+    CrossGridDragState,
+    GridType,
 } from './types';
 import {
     loadAllCells,
@@ -41,6 +43,21 @@ const App: React.FC = () => {
         row: 0,
         col: 0,
         isBuffer: false,
+    });
+
+    // Refs for cross-grid hit testing
+    const mainGridRef = React.useRef<CanvasGridHandle>(null);
+    const bufferGridRef = React.useRef<BufferGridPanelHandle>(null);
+
+    // Cross-grid drag state
+    const [crossGridDragState, setCrossGridDragState] = useState<CrossGridDragState>({
+        isDragging: false,
+        sourceCell: null,
+        sourceRow: -1,
+        sourceCol: -1,
+        currentX: 0,
+        currentY: 0,
+        sourceGrid: null,
     });
 
     // Load cells from storage on mount
@@ -188,93 +205,11 @@ const App: React.FC = () => {
         }
     }, [editorState.isBuffer]);
 
-    // Handle main grid cell drop (drag and drop within main grid)
-    const handleCellDrop = useCallback(async (
-        sourceRow: number,
-        sourceCol: number,
-        targetRow: number,
-        targetCol: number
-    ) => {
-        if (sourceRow === targetRow && sourceCol === targetCol) return;
+    // REFACTOR: handleCellDrop removed - relying on global handleDragEnd
+    /* const handleCellDrop = ... */
 
-        const sourceKey = getCellKey(sourceRow, sourceCol);
-        const targetKey = getCellKey(targetRow, targetCol);
-
-        setCells((prev: Map<string, CellData>) => {
-            const next = new Map(prev);
-            const sourceCell = prev.get(sourceKey);
-            const targetCell = prev.get(targetKey);
-
-            if (!sourceCell) return prev;
-
-            if (targetCell && cellHasContent(targetCell)) {
-                // Swap cells
-                const newSource: CellData = { ...targetCell, row: sourceRow, col: sourceCol };
-                const newTarget: CellData = { ...sourceCell, row: targetRow, col: targetCol };
-
-                next.set(sourceKey, newSource);
-                next.set(targetKey, newTarget);
-
-                saveCell(newSource).catch(console.error);
-                saveCell(newTarget).catch(console.error);
-            } else {
-                // Move cell
-                const newTarget: CellData = { ...sourceCell, row: targetRow, col: targetCol };
-
-                next.delete(sourceKey);
-                next.set(targetKey, newTarget);
-
-                deleteCell(sourceRow, sourceCol).catch(console.error);
-                saveCell(newTarget).catch(console.error);
-            }
-
-            return next;
-        });
-    }, []);
-
-    // Handle buffer grid cell drop (drag and drop within buffer grid)
-    const handleBufferCellDrop = useCallback(async (
-        sourceRow: number,
-        sourceCol: number,
-        targetRow: number,
-        targetCol: number
-    ) => {
-        if (sourceRow === targetRow && sourceCol === targetCol) return;
-
-        const sourceKey = getCellKey(sourceRow, sourceCol);
-        const targetKey = getCellKey(targetRow, targetCol);
-
-        setBufferCells((prev: Map<string, CellData>) => {
-            const next = new Map(prev);
-            const sourceCell = prev.get(sourceKey);
-            const targetCell = prev.get(targetKey);
-
-            if (!sourceCell) return prev;
-
-            if (targetCell && cellHasContent(targetCell)) {
-                // Swap cells
-                const newSource: CellData = { ...targetCell, row: sourceRow, col: sourceCol };
-                const newTarget: CellData = { ...sourceCell, row: targetRow, col: targetCol };
-
-                next.set(sourceKey, newSource);
-                next.set(targetKey, newTarget);
-
-                saveBufferCell(newSource).catch(console.error);
-                saveBufferCell(newTarget).catch(console.error);
-            } else {
-                // Move cell
-                const newTarget: CellData = { ...sourceCell, row: targetRow, col: targetCol };
-
-                next.delete(sourceKey);
-                next.set(targetKey, newTarget);
-
-                deleteBufferCell(sourceRow, sourceCol).catch(console.error);
-                saveBufferCell(newTarget).catch(console.error);
-            }
-
-            return next;
-        });
-    }, []);
+    // REFACTOR: handleBufferCellDrop removed - relying on global handleDragEnd
+    /* const handleBufferCellDrop = ... */
 
     // Handle summary item click - highlight matching cells
     const handleSummaryItemClick = useCallback((combinedCode: string) => {
@@ -285,6 +220,208 @@ const App: React.FC = () => {
     const handleBufferSummaryItemClick = useCallback((combinedCode: string) => {
         setBufferHighlightedCode(combinedCode);
     }, []);
+
+    // Cross-grid drag handlers
+    const handleDragStart = useCallback((cell: CellData, row: number, col: number, sourceGrid: GridType) => {
+        setCrossGridDragState(prev => ({
+            ...prev,
+            isDragging: true,
+            sourceCell: cell,
+            sourceRow: row,
+            sourceCol: col,
+            sourceGrid,
+            dropHandled: false, // Init flag
+        }));
+    }, []);
+
+    const handleDragMove = useCallback((x: number, y: number) => {
+        setCrossGridDragState(prev => ({
+            ...prev,
+            currentX: x,
+            currentY: y,
+        }));
+    }, []);
+
+    const handleCrossGridDrop = useCallback(async (
+        sourceGrid: GridType,
+        targetGrid: GridType,
+        cell: CellData,
+        targetRow: number,
+        targetCol: number
+    ) => {
+        // Global handler handles ALL drops now (Intra-grid AND Cross-grid)
+        // if (sourceGrid === targetGrid) return; // REMOVED early return
+
+        // Target key
+        const targetKey = getCellKey(targetRow, targetCol);
+
+        // 1. Check target cell content
+        let targetCellExisting: CellData | undefined;
+        if (targetGrid === 'main') {
+            targetCellExisting = cells.get(targetKey);
+        } else {
+            targetCellExisting = bufferCells.get(targetKey);
+        }
+
+        // 2. Prepare new cells
+        const newTargetCell: CellData = {
+            ...cell,
+            row: targetRow,
+            col: targetCol
+        };
+
+        let newSourceCell: CellData | null = null;
+        if (targetCellExisting && cellHasContent(targetCellExisting)) {
+            // Swap: existing target goes to source
+            newSourceCell = {
+                ...targetCellExisting,
+                row: cell.row,
+                col: cell.col
+            };
+        }
+
+        // 3. Update State & Storage logic
+
+        // OPTIMIZATION: If Same Grid, do single update to avoid race/conflict
+        if (sourceGrid === targetGrid) {
+            const isMain = sourceGrid === 'main';
+            if (isMain) {
+                setCells(prev => {
+                    const next = new Map(prev);
+                    // Add new target
+                    next.set(targetKey, newTargetCell);
+                    // Remove or update source
+                    if (newSourceCell) {
+                        next.set(getCellKey(cell.row, cell.col), newSourceCell);
+                    } else {
+                        // Careful: if sourceKey == targetKey (drop on self), we already set it above.
+                        // But if they are different keys:
+                        if (getCellKey(cell.row, cell.col) !== targetKey) {
+                            next.delete(getCellKey(cell.row, cell.col));
+                        }
+                    }
+                    return next;
+                });
+
+                // Persistence
+                await saveCell(newTargetCell);
+                if (newSourceCell) {
+                    await saveCell(newSourceCell);
+                } else if (getCellKey(cell.row, cell.col) !== targetKey) {
+                    await deleteCell(cell.row, cell.col);
+                }
+
+            } else {
+                // Buffer Grid Same-Grid Move
+                setBufferCells(prev => {
+                    const next = new Map(prev);
+                    next.set(targetKey, newTargetCell);
+                    if (newSourceCell) {
+                        next.set(getCellKey(cell.row, cell.col), newSourceCell);
+                    } else if (getCellKey(cell.row, cell.col) !== targetKey) {
+                        next.delete(getCellKey(cell.row, cell.col));
+                    }
+                    return next;
+                });
+
+                await saveBufferCell(newTargetCell);
+                if (newSourceCell) {
+                    await saveBufferCell(newSourceCell);
+                } else if (getCellKey(cell.row, cell.col) !== targetKey) {
+                    await deleteBufferCell(cell.row, cell.col);
+                }
+            }
+        } else {
+            // CROSS GRID LOGIC (Original logic, simplified)
+
+            // Update Target Grid
+            if (targetGrid === 'main') {
+                setCells(prev => {
+                    const next = new Map(prev);
+                    next.set(targetKey, newTargetCell);
+                    return next;
+                });
+                await saveCell(newTargetCell);
+            } else {
+                setBufferCells(prev => {
+                    const next = new Map(prev);
+                    next.set(targetKey, newTargetCell);
+                    return next;
+                });
+                await saveBufferCell(newTargetCell);
+            }
+
+            // Update Source Grid (Remove original or set swapped)
+            if (sourceGrid === 'main') {
+                setCells(prev => {
+                    const next = new Map(prev);
+                    if (newSourceCell) {
+                        next.set(getCellKey(cell.row, cell.col), newSourceCell);
+                    } else {
+                        next.delete(getCellKey(cell.row, cell.col));
+                    }
+                    return next;
+                });
+
+                if (newSourceCell) {
+                    await saveCell(newSourceCell);
+                } else {
+                    await deleteCell(cell.row, cell.col);
+                }
+            } else {
+                setBufferCells(prev => {
+                    const next = new Map(prev);
+                    if (newSourceCell) {
+                        next.set(getCellKey(cell.row, cell.col), newSourceCell);
+                    } else {
+                        next.delete(getCellKey(cell.row, cell.col));
+                    }
+                    return next;
+                });
+
+                if (newSourceCell) {
+                    await saveBufferCell(newSourceCell);
+                } else {
+                    await deleteBufferCell(cell.row, cell.col);
+                }
+            }
+        }
+
+    }, [cells, bufferCells]);
+
+    const handleDragEnd = useCallback(() => {
+        const { isDragging, sourceCell, sourceGrid, currentX, currentY, dropHandled } = crossGridDragState;
+
+        // Prevent double drops
+        if (dropHandled) return;
+
+        if (isDragging && sourceCell && sourceGrid) {
+            // Check drops
+            // PRIORITY: Check Buffer Grid FIRST because it floats ON TOP of Main Grid
+            const bufferDrop = bufferGridRef.current?.checkDropTarget(currentX, currentY);
+            if (bufferDrop) {
+                handleCrossGridDrop(sourceGrid, 'buffer', sourceCell, bufferDrop.row, bufferDrop.col);
+            } else {
+                // Only check Main Grid if not dropped on Buffer Grid
+                const mainDrop = mainGridRef.current?.checkDropTarget(currentX, currentY);
+                if (mainDrop) {
+                    handleCrossGridDrop(sourceGrid, 'main', sourceCell, mainDrop.row, mainDrop.col);
+                }
+            }
+        }
+
+        // Reset state & set dropHandled to true (though we reset isDragging anyway)
+        setCrossGridDragState({
+            isDragging: false,
+            sourceCell: null,
+            sourceRow: -1,
+            sourceCol: -1,
+            currentX: 0,
+            currentY: 0,
+            sourceGrid: null,
+            dropHandled: true,
+        });
+    }, [crossGridDragState, handleCrossGridDrop]);
 
     // Close editor
     const handleEditorClose = useCallback(() => {
@@ -361,11 +498,15 @@ const App: React.FC = () => {
 
             <div className="main-content">
                 <CanvasGrid
+                    ref={mainGridRef}
                     config={DEFAULT_GRID_CONFIG}
                     cells={cells}
                     onCellTap={handleCellTap}
-                    onCellDrop={handleCellDrop}
                     highlightedCode={highlightedCode}
+                    externalDragState={crossGridDragState}
+                    onDragStart={(cell, row, col) => handleDragStart(cell, row, col, 'main')}
+                    onDragMove={handleDragMove}
+                    onDragEnd={handleDragEnd}
                 />
 
                 <SummaryPanel
@@ -377,11 +518,15 @@ const App: React.FC = () => {
             </div>
 
             <BufferGridPanel
-                cells={bufferCells}
+                ref={bufferGridRef}
+                bufferCells={bufferCells}
                 highlightedCode={bufferHighlightedCode}
                 onCellTap={handleBufferCellTap}
-                onCellDrop={handleBufferCellDrop}
                 onSummaryItemClick={handleBufferSummaryItemClick}
+                externalDragState={crossGridDragState}
+                onDragStart={(cell, row, col) => handleDragStart(cell, row, col, 'buffer')}
+                onDragMove={handleDragMove}
+                onDragEnd={handleDragEnd}
             />
 
             <CellEditor

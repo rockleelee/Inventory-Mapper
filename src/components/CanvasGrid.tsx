@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useEffect, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
 import {
     CellData,
     GridConfig,
@@ -6,6 +6,7 @@ import {
     PointerData,
     GestureState,
     DragState,
+    CrossGridDragState,
     getColumnLabel,
     getCellKey,
     cellHasContent,
@@ -17,8 +18,18 @@ interface CanvasGridProps {
     config: GridConfig;
     cells: Map<string, CellData>;
     onCellTap: (row: number, col: number) => void;
-    onCellDrop: (sourceRow: number, sourceCol: number, targetRow: number, targetCol: number) => void;
     highlightedCode?: string | null;
+    // Cross-grid drag support
+    externalDragState?: CrossGridDragState | null;
+    onDragStart?: (cell: CellData, row: number, col: number) => void;
+    onDragMove?: (x: number, y: number) => void;
+    onDragEnd?: () => void;
+    onCrossGridDrop?: (cell: CellData, targetRow: number, targetCol: number) => void;
+    canvasId?: string;
+}
+
+export interface CanvasGridHandle {
+    checkDropTarget: (x: number, y: number) => { row: number; col: number } | null;
 }
 
 interface VerticalGroup {
@@ -33,13 +44,16 @@ const PINCH_THRESHOLD = 10; // pixels
 const MIN_SCALE = 0.3;
 const MAX_SCALE = 3;
 
-export const CanvasGrid: React.FC<CanvasGridProps> = ({
+export const CanvasGrid = forwardRef<CanvasGridHandle, CanvasGridProps>(({
     config,
     cells,
     onCellTap,
-    onCellDrop,
     highlightedCode,
-}) => {
+    externalDragState,
+    onDragStart,
+    onDragMove,
+    onDragEnd,
+}, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -265,6 +279,9 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                                     currentY: e.clientY,
                                 });
 
+                                // Notify parent for cross-grid drag coordination
+                                onDragStart?.(cell, gridPos.row, gridPos.col);
+
                                 if (navigator.vibrate) {
                                     navigator.vibrate(50);
                                 }
@@ -301,6 +318,8 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                     currentX: e.clientX,
                     currentY: e.clientY,
                 }));
+                // Notify parent for cross-grid coordination
+                onDragMove?.(e.clientX, e.clientY);
             } else if (gestureStateRef.current !== 'longPress') {
                 const dx = pointer.x - pointer.startX;
                 const dy = pointer.y - pointer.startY;
@@ -310,11 +329,16 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                     clearLongPressTimer();
                     gestureStateRef.current = 'panning';
 
-                    setViewport(prev => ({
-                        ...prev,
-                        offsetX: prev.offsetX + e.movementX,
-                        offsetY: prev.offsetY + e.movementY,
-                    }));
+                    /* 
+                     * RESTORE MAIN GRID CONFIGURATION:
+                     * Disable custom panning to allow native browser scrolling.
+                     * The canvas is now full-size, so we scroll the container instead.
+                     */
+                    // setViewport(prev => ({
+                    //     ...prev,
+                    //     offsetX: prev.offsetX + e.movementX,
+                    //     offsetY: prev.offsetY + e.movementY,
+                    // }));
                 }
             }
         } else if (pointerCount === 2 && gestureStateRef.current === 'zooming') {
@@ -361,15 +385,15 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
             const duration = Date.now() - pointer.startTime;
 
             if (gestureStateRef.current === 'dragging') {
-                const targetPos = screenToGrid(e.clientX, e.clientY);
-                if (targetPos && dragState.sourceCell) {
-                    onCellDrop(
-                        dragState.sourceRow,
-                        dragState.sourceCol,
-                        targetPos.row,
-                        targetPos.col
-                    );
-                }
+                /* 
+                 * REFACTOR: REMOVE LOCAL DROP
+                 * We rely solely on the parent (App.tsx) handling onDragEnd 
+                 * to ensure single-source-of-truth and correct layering priority.
+                 */
+                // if (targetPos && dragState.sourceCell) {
+                //     onCellDrop(...)
+                // }
+                // If targetPos is null, dragEnd callback will handle cross-grid scenario
 
                 setDragState({
                     isDragging: false,
@@ -379,6 +403,9 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                     currentX: 0,
                     currentY: 0,
                 });
+
+                // Notify parent that drag ended
+                onDragEnd?.();
             } else if (gestureStateRef.current === 'idle' && distance < TAP_THRESHOLD && duration < LONG_PRESS_DURATION) {
                 const gridPos = screenToGrid(pointer.startX, pointer.startY);
                 if (gridPos) {
@@ -397,7 +424,7 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
             remaining.startY = remaining.y;
             gestureStateRef.current = 'panning';
         }
-    }, [screenToGrid, onCellTap, onCellDrop, dragState]);
+    }, [screenToGrid, onCellTap, dragState]);
 
     // Handle pointer cancel
     const handlePointerCancel = useCallback((e: React.PointerEvent) => {
@@ -418,7 +445,12 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
     }, []);
 
     // Handle wheel zoom
-    const handleWheel = useCallback((e: React.WheelEvent) => {
+    const handleWheel = useCallback((_e: React.WheelEvent) => {
+        // RESTORE MAIN GRID CONFIGURATION:
+        // Allow native browser scrolling by NOT calling preventDefault()
+        // and NOT performing custom zoom/pan.
+
+        /* 
         e.preventDefault();
 
         const rect = canvasRef.current?.getBoundingClientRect();
@@ -438,6 +470,7 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
             offsetY: cy - (cy - viewport.offsetY) * scaleRatio,
             scale: newScale,
         });
+        */
     }, [viewport]);
 
     // Draw the grid
@@ -680,36 +713,122 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
 
                 ctx.restore();
             }
-        }
-    }, [viewport, config, cells, dragState, screenToGrid, detectVerticalGroups, highlightedCode, highlightAlpha]);
 
-    // Resize canvas to fit container
+            // Draw external drag preview (from other grid)
+            if (externalDragState?.isDragging && externalDragState.sourceCell) {
+                // Highlight valid drop target under cursor
+                const targetPos = screenToGrid(externalDragState.currentX, externalDragState.currentY);
+                if (targetPos) {
+                    ctx.save();
+                    ctx.translate(offsetX, offsetY);
+                    ctx.scale(scale, scale);
+
+                    const tx = rowHeaderWidth + targetPos.col * cellWidth;
+                    const ty = headerHeight + targetPos.row * cellHeight;
+
+                    // Green indicator for valid drop
+                    ctx.fillStyle = 'rgba(78, 205, 196, 0.3)';
+                    ctx.fillRect(tx, ty, cellWidth, cellHeight);
+
+                    ctx.strokeStyle = '#4ECDC4';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(tx, ty, cellWidth, cellHeight);
+
+                    ctx.restore();
+                }
+
+                // Draw floating cell preview
+                const rect = canvas.getBoundingClientRect();
+                // Check if cursor is roughly over this canvas
+                if (externalDragState.currentX >= rect.left &&
+                    externalDragState.currentX <= rect.right &&
+                    externalDragState.currentY >= rect.top &&
+                    externalDragState.currentY <= rect.bottom) {
+
+                    const dx = externalDragState.currentX - rect.left;
+                    const dy = externalDragState.currentY - rect.top;
+
+                    const dragColor = getMaterialColor(externalDragState.sourceCell.code1);
+
+                    ctx.save();
+                    ctx.globalAlpha = 0.8;
+
+                    ctx.fillStyle = dragColor.primary;
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+                    ctx.shadowBlur = 10;
+                    ctx.fillRect(
+                        dx - (cellWidth * scale) / 2,
+                        dy - (cellHeight * scale) / 2,
+                        cellWidth * scale,
+                        cellHeight * scale
+                    );
+
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `bold ${14 * scale}px Inter, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(getCombinedCode(externalDragState.sourceCell), dx, dy - 5 * scale);
+
+                    ctx.font = `${12 * scale}px Inter, sans-serif`;
+                    ctx.fillText(String(externalDragState.sourceCell.quantity), dx, dy + 10 * scale);
+
+                    ctx.restore();
+                }
+            }
+        }
+    }, [viewport, config, cells, dragState, externalDragState, screenToGrid, detectVerticalGroups, highlightedCode, highlightAlpha]);
+
+    // Resize canvas to full grid size (Restore Main Grid Configuration)
     useEffect(() => {
         const container = containerRef.current;
         const canvas = canvasRef.current;
         if (!container || !canvas) return;
 
-        const resizeObserver = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                const { width, height } = entry.contentRect;
-                canvas.width = width * window.devicePixelRatio;
-                canvas.height = height * window.devicePixelRatio;
-                canvas.style.width = `${width}px`;
-                canvas.style.height = `${height}px`;
+        // Calculate full logical size
+        const totalWidth = config.cols * config.cellWidth + config.rowHeaderWidth;
+        const totalHeight = config.rows * config.cellHeight + config.headerHeight;
 
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-                }
+        const updateSize = () => {
+            const dpr = window.devicePixelRatio || 1;
+            const scaledWidth = totalWidth * viewport.scale;
+            const scaledHeight = totalHeight * viewport.scale;
 
-                draw();
+            canvas.width = scaledWidth * dpr;
+            canvas.height = scaledHeight * dpr;
+
+            canvas.style.width = `${scaledWidth}px`;
+            canvas.style.height = `${scaledHeight}px`;
+
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                ctx.scale(dpr, dpr);
             }
+
+            draw();
+        };
+
+        // Initial size
+        updateSize();
+
+        // Listen for container resize just to redraw if needed (though canvas size is fixed to grid)
+        const resizeObserver = new ResizeObserver(() => {
+            // We don't resize the canvas to the container anymore
+            // But we might want to redraw
+            draw();
         });
 
         resizeObserver.observe(container);
 
         return () => resizeObserver.disconnect();
-    }, [draw]);
+    }, [config, viewport.scale, draw]); // depend on config and scale
+
+    // Expose functionality to parent via ref
+    useImperativeHandle(ref, () => ({
+        checkDropTarget: (x: number, y: number) => {
+            return screenToGrid(x, y);
+        }
+    }), [screenToGrid]);
 
     // Redraw on state change
     useEffect(() => {
@@ -738,8 +857,9 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
             className="canvas-container"
             style={{
                 flex: 1,
-                overflow: 'hidden',
-                touchAction: 'none',
+                overflow: 'auto', // Allow native scrolling
+                touchAction: 'pan-x pan-y', // Allow browser handling of scrolling
+                backgroundColor: '#1a1a2e', // Match theme
             }}
         >
             <canvas
@@ -752,10 +872,14 @@ export const CanvasGrid: React.FC<CanvasGridProps> = ({
                 style={{
                     display: 'block',
                     cursor: dragState.isDragging ? 'grabbing' : 'default',
+                    // Allow browser to handle scrolling/panning
+                    touchAction: 'pan-x pan-y',
                 }}
             />
         </div>
     );
-};
+});
+
+CanvasGrid.displayName = 'CanvasGrid';
 
 export default CanvasGrid;

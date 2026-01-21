@@ -67,6 +67,14 @@ export interface DragState {
     sourceCol: number;
     currentX: number;
     currentY: number;
+    dropHandled?: boolean;
+}
+
+// Cross-grid drag state for App-level coordination
+export type GridType = 'main' | 'buffer';
+
+export interface CrossGridDragState extends DragState {
+    sourceGrid: GridType | null;
 }
 
 // Grid configuration

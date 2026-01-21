@@ -1,10 +1,11 @@
-import React, { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useEffect, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
 import {
     CellData,
     ViewportState,
     PointerData,
     GestureState,
     DragState,
+    CrossGridDragState,
     BUFFER_GRID_CONFIG,
     getColumnLabel,
     getCellKey,
@@ -15,17 +16,23 @@ import {
 } from '../types';
 
 interface BufferGridPanelProps {
-    cells: Map<string, CellData>;
+    bufferCells: Map<string, CellData>;
     highlightedCode: string | null;
     onCellTap: (row: number, col: number) => void;
-    onCellDrop: (sourceRow: number, sourceCol: number, targetRow: number, targetCol: number) => void;
-    onCrossGridDrop?: (cell: CellData, targetRow: number, targetCol: number) => void;
-    onDragToMainGrid?: (cell: CellData, screenX: number, screenY: number) => void;
-    onSummaryItemClick?: (combinedCode: string) => void;
+    onSummaryItemClick: (combinedCode: string) => void;
+    // Cross-grid drag support
+    externalDragState: CrossGridDragState;
+    onDragStart: (cell: CellData, row: number, col: number) => void;
+    onDragMove: (x: number, y: number) => void;
+    onDragEnd: () => void;
 }
 
+export interface BufferGridPanelHandle {
+    checkDropTarget: (x: number, y: number) => { row: number; col: number } | null;
+}
+
+const TAP_THRESHOLD = 5; // Reduced for mouse sensitivity?
 const LONG_PRESS_DURATION = 500;
-const TAP_THRESHOLD = 10;
 
 // Panel position persistence
 const PANEL_POSITION_KEY = 'buffer-panel-position';
@@ -45,13 +52,16 @@ function savePanelPosition(pos: { x: number; y: number }) {
     } catch { }
 }
 
-export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
-    cells,
+export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanelProps>(({
+    bufferCells,
     highlightedCode,
     onCellTap,
-    onCellDrop,
     onSummaryItemClick,
-}) => {
+    externalDragState,
+    onDragStart,
+    onDragMove,
+    onDragEnd,
+}, ref) => {
     const config = BUFFER_GRID_CONFIG;
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -92,7 +102,7 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
     const summaries = React.useMemo(() => {
         const materialMap = new Map<string, MaterialSummary>();
 
-        cells.forEach((cell) => {
+        bufferCells.forEach((cell) => {
             if (!cellHasContent(cell) || !cell.code1) return;
 
             const combinedCode = getCombinedCode(cell);
@@ -116,7 +126,7 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
         return Array.from(materialMap.values()).sort((a, b) =>
             a.combinedCode.localeCompare(b.combinedCode)
         );
-    }, [cells]);
+    }, [bufferCells]);
 
     const totalQuantity = React.useMemo(() => {
         return summaries.reduce((sum, s) => sum + s.totalQuantity, 0);
@@ -231,7 +241,7 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
 
                         if (distance < TAP_THRESHOLD) {
                             const key = getCellKey(gridPos.row, gridPos.col);
-                            const cell = cells.get(key);
+                            const cell = bufferCells.get(key);
 
                             if (cell && cellHasContent(cell)) {
                                 gestureStateRef.current = 'dragging';
@@ -244,6 +254,9 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
                                     currentY: e.clientY,
                                 });
 
+                                // Notify parent for cross-grid drag coordination
+                                onDragStart?.(cell, gridPos.row, gridPos.col);
+
                                 if (navigator.vibrate) {
                                     navigator.vibrate(50);
                                 }
@@ -253,7 +266,7 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
                 }, LONG_PRESS_DURATION);
             }
         }
-    }, [screenToGrid, cells]);
+    }, [screenToGrid, bufferCells]);
 
     // Handle pointer move
     const handlePointerMove = useCallback((e: React.PointerEvent) => {
@@ -270,6 +283,8 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
                     currentX: e.clientX,
                     currentY: e.clientY,
                 }));
+                // Notify parent for cross-grid coordination
+                onDragMove?.(e.clientX, e.clientY);
             } else if (gestureStateRef.current !== 'longPress') {
                 const dx = pointer.x - pointer.startX;
                 const dy = pointer.y - pointer.startY;
@@ -306,15 +321,11 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
             const duration = Date.now() - pointer.startTime;
 
             if (gestureStateRef.current === 'dragging') {
-                const targetPos = screenToGrid(e.clientX, e.clientY);
-                if (targetPos && dragState.sourceCell) {
-                    onCellDrop(
-                        dragState.sourceRow,
-                        dragState.sourceCol,
-                        targetPos.row,
-                        targetPos.col
-                    );
-                }
+                /* REFACTOR: Rely on parent onDragEnd for single drop handling */
+                // if (targetPos && dragState.sourceCell) {
+                //     onCellDrop(...)
+                // }
+                // If targetPos is null, dragEnd callback will handle cross-grid scenario
 
                 setDragState({
                     isDragging: false,
@@ -324,6 +335,9 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
                     currentX: 0,
                     currentY: 0,
                 });
+
+                // Notify parent that drag ended
+                onDragEnd?.();
             } else if (gestureStateRef.current === 'idle' && distance < TAP_THRESHOLD && duration < LONG_PRESS_DURATION) {
                 const gridPos = screenToGrid(pointer.startX, pointer.startY);
                 if (gridPos) {
@@ -337,7 +351,7 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
         if (pointersRef.current.size === 0) {
             gestureStateRef.current = 'idle';
         }
-    }, [screenToGrid, onCellTap, onCellDrop, dragState]);
+    }, [screenToGrid, onCellTap, dragState]);
 
     // Highlight animation effect
     useEffect(() => {
@@ -427,7 +441,7 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
                 const key = getCellKey(row, col);
-                const cell = cells.get(key);
+                const cell = bufferCells.get(key);
 
                 if (cell && cellHasContent(cell)) {
                     const x = rowHeaderWidth + col * cellWidth;
@@ -547,7 +561,70 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
 
             ctx.restore();
         }
-    }, [viewport, config, cells, dragState, highlightedCode, highlightAlpha]);
+
+        // Draw external drag preview (from other grid)
+        if (externalDragState?.isDragging && externalDragState.sourceCell) {
+            // Highlight valid drop target under cursor
+            const targetPos = screenToGrid(externalDragState.currentX, externalDragState.currentY);
+            if (targetPos) {
+                ctx.save();
+                ctx.translate(offsetX, offsetY);
+                ctx.scale(scale, scale);
+
+                const tx = rowHeaderWidth + targetPos.col * cellWidth;
+                const ty = headerHeight + targetPos.row * cellHeight;
+
+                // Green indicator for valid drop
+                ctx.fillStyle = 'rgba(78, 205, 196, 0.3)';
+                ctx.fillRect(tx, ty, cellWidth, cellHeight);
+
+                ctx.strokeStyle = '#4ECDC4';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(tx, ty, cellWidth, cellHeight);
+
+                ctx.restore();
+            }
+
+            // Draw floating cell preview
+            const rect = canvas.getBoundingClientRect();
+            // Check if cursor is roughly over this canvas
+            if (externalDragState.currentX >= rect.left &&
+                externalDragState.currentX <= rect.right &&
+                externalDragState.currentY >= rect.top &&
+                externalDragState.currentY <= rect.bottom) {
+
+                const dx = externalDragState.currentX - rect.left;
+                const dy = externalDragState.currentY - rect.top;
+
+                const dragColor = getMaterialColor(externalDragState.sourceCell.code1);
+
+                ctx.save();
+                ctx.globalAlpha = 0.8;
+
+                ctx.fillStyle = dragColor.primary;
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+                ctx.shadowBlur = 10;
+                ctx.fillRect(
+                    dx - (cellWidth * scale) / 2,
+                    dy - (cellHeight * scale) / 2,
+                    cellWidth * scale,
+                    cellHeight * scale
+                );
+
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `bold ${12 * scale}px Inter, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(getCombinedCode(externalDragState.sourceCell), dx, dy);
+
+                ctx.font = `${10 * scale}px Inter, sans-serif`;
+                ctx.fillText(String(externalDragState.sourceCell.quantity), dx, dy + 10 * scale);
+
+                ctx.restore();
+            }
+        }
+    }, [viewport, config, bufferCells, dragState, externalDragState, screenToGrid, highlightedCode, highlightAlpha]);
 
     // Resize canvas
     useEffect(() => {
@@ -594,6 +671,20 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
         animationId = requestAnimationFrame(animate);
         return () => cancelAnimationFrame(animationId);
     }, [dragState.isDragging, draw]);
+
+    // Expose functionality to parent via ref
+    useImperativeHandle(ref, () => ({
+        checkDropTarget: (x: number, y: number) => {
+            const canvas = canvasRef.current;
+            if (!canvas) return null;
+            const rect = canvas.getBoundingClientRect();
+            // First check if within canvas bounds
+            if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+                return screenToGrid(x, y);
+            }
+            return null;
+        }
+    }), [screenToGrid]);
 
     const gridWidth = config.cols * config.cellWidth + config.rowHeaderWidth;
     const gridHeight = config.rows * config.cellHeight + config.headerHeight;
@@ -682,6 +773,8 @@ export const BufferGridPanel: React.FC<BufferGridPanelProps> = ({
             )}
         </div>
     );
-};
+});
+
+BufferGridPanel.displayName = 'BufferGridPanel';
 
 export default BufferGridPanel;

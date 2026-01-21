@@ -907,6 +907,8 @@ body {
 .buffer-panel {
   position: fixed;
   z-index: 500;
+  pointer-events: auto;
+  /* Ensure it captures events */
   background: #12192a;
   border: 1px solid #1e293b;
   border-radius: var(--radius-lg);
