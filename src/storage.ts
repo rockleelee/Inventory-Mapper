@@ -2,9 +2,10 @@ import { openDB, IDBPDatabase } from 'idb';
 import { CellData, getCellKey } from './types';
 
 const DB_NAME = 'inventory-mapper-db';
-const DB_VERSION = 3; // Bumped version for buffer grid
+const DB_VERSION = 4; // Bumped for image store
 const STORE_NAME = 'cells';
 const BUFFER_STORE_NAME = 'bufferCells';
+const IMAGE_STORE_NAME = 'images';
 
 interface InventoryDB {
     cells: {
@@ -16,6 +17,10 @@ interface InventoryDB {
         key: string;
         value: CellData & { key: string };
         indexes: { 'by-code1': string };
+    };
+    images: {
+        key: string;
+        value: { id: string; dataUrl: string };
     };
 }
 
@@ -94,10 +99,33 @@ async function getDB(): Promise<IDBPDatabase<InventoryDB>> {
                 const bufferStore = db.createObjectStore(BUFFER_STORE_NAME, { keyPath: 'key' });
                 bufferStore.createIndex('by-code1', 'code1');
             }
+
+            // Add images store (version 4+)
+            if (!db.objectStoreNames.contains(IMAGE_STORE_NAME)) {
+                db.createObjectStore(IMAGE_STORE_NAME, { keyPath: 'id' });
+            }
         },
     });
 
     return dbInstance;
+}
+
+// ========== IMAGE FUNCTIONS ==========
+
+export async function saveImage(id: string, dataUrl: string): Promise<void> {
+    const db = await getDB();
+    await db.put(IMAGE_STORE_NAME, { id, dataUrl });
+}
+
+export async function loadImage(id: string): Promise<string | null> {
+    const db = await getDB();
+    const record = await db.get(IMAGE_STORE_NAME, id);
+    return record?.dataUrl ?? null;
+}
+
+export async function deleteImage(id: string): Promise<void> {
+    const db = await getDB();
+    await db.delete(IMAGE_STORE_NAME, id);
 }
 
 // Save a single cell

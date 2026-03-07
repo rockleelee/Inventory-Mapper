@@ -8,6 +8,8 @@ export interface CellData {
     quantity: number;
     note: string;
     // Color is derived from code1, NOT stored
+    calcHistory?: string[];  // Calculation steps e.g. ["4000", "+2000", "+500", "=6500"]
+    imageId?: string;        // Reference to image stored in IndexedDB
 }
 
 // Grid position type

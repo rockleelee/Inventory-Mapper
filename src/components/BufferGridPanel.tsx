@@ -25,6 +25,8 @@ interface BufferGridPanelProps {
     onDragStart: (cell: CellData, row: number, col: number) => void;
     onDragMove: (x: number, y: number) => void;
     onDragEnd: () => void;
+    // Long-press action menu
+    onLongPress?: (row: number, col: number, screenX: number, screenY: number, isBuffer: boolean) => void;
 }
 
 export interface BufferGridPanelHandle {
@@ -61,6 +63,7 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
     onDragStart,
     onDragMove,
     onDragEnd,
+    onLongPress,
 }, ref) => {
     const config = BUFFER_GRID_CONFIG;
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -244,22 +247,10 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
                             const cell = bufferCells.get(key);
 
                             if (cell && cellHasContent(cell)) {
-                                gestureStateRef.current = 'dragging';
-                                setDragState({
-                                    isDragging: true,
-                                    sourceCell: cell,
-                                    sourceRow: gridPos.row,
-                                    sourceCol: gridPos.col,
-                                    currentX: e.clientX,
-                                    currentY: e.clientY,
-                                });
-
-                                // Notify parent for cross-grid drag coordination
-                                onDragStart?.(cell, gridPos.row, gridPos.col);
-
-                                if (navigator.vibrate) {
-                                    navigator.vibrate(50);
-                                }
+                                // Long-press on filled buffer cell: fire action menu callback
+                                gestureStateRef.current = 'longPress';
+                                onLongPress?.(gridPos.row, gridPos.col, currentPointer.x, currentPointer.y, true);
+                                if (navigator.vibrate) navigator.vibrate(40);
                             }
                         }
                     }
@@ -292,13 +283,31 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
 
                 if (distance > TAP_THRESHOLD) {
                     clearLongPressTimer();
-                    gestureStateRef.current = 'panning';
 
-                    setViewport(prev => ({
-                        ...prev,
-                        offsetX: prev.offsetX + e.movementX,
-                        offsetY: prev.offsetY + e.movementY,
-                    }));
+                    const gridPos = screenToGrid(pointer.startX, pointer.startY);
+                    const key = gridPos ? getCellKey(gridPos.row, gridPos.col) : null;
+                    const cell = key ? bufferCells.get(key) : null;
+
+                    if (cell && cellHasContent(cell)) {
+                        gestureStateRef.current = 'dragging';
+                        setDragState({
+                            isDragging: true,
+                            sourceCell: cell,
+                            sourceRow: gridPos!.row,
+                            sourceCol: gridPos!.col,
+                            currentX: e.clientX,
+                            currentY: e.clientY,
+                        });
+                        onDragStart?.(cell, gridPos!.row, gridPos!.col);
+                        if (navigator.vibrate) navigator.vibrate(50);
+                    } else {
+                        gestureStateRef.current = 'panning';
+                        setViewport((prev) => ({
+                            ...prev,
+                            offsetX: prev.offsetX + e.movementX,
+                            offsetY: prev.offsetY + e.movementY,
+                        }));
+                    }
                 }
             }
         }
@@ -351,7 +360,7 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
         if (pointersRef.current.size === 0) {
             gestureStateRef.current = 'idle';
         }
-    }, [screenToGrid, onCellTap, dragState]);
+    }, [screenToGrid, onCellTap, dragState, onDragEnd]);
 
     // Highlight animation effect
     useEffect(() => {
@@ -678,13 +687,19 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
             const canvas = canvasRef.current;
             if (!canvas) return null;
             const rect = canvas.getBoundingClientRect();
-            // First check if within canvas bounds
             if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-                return screenToGrid(x, y);
+                const pos = screenToGrid(x, y);
+                if (!pos) return null;
+                // Only allow drop on EMPTY buffer cells
+                const targetKey = getCellKey(pos.row, pos.col);
+                if (bufferCells.has(targetKey) && cellHasContent(bufferCells.get(targetKey)!)) {
+                    return null;
+                }
+                return pos;
             }
             return null;
         }
-    }), [screenToGrid]);
+    }), [screenToGrid, bufferCells]);
 
     const gridWidth = config.cols * config.cellWidth + config.rowHeaderWidth;
     const gridHeight = config.rows * config.cellHeight + config.headerHeight;

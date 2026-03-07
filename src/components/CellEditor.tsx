@@ -7,6 +7,7 @@ import {
     getMaterialColor,
     getColumnLabel,
 } from '../types';
+import { saveImage, loadImage, deleteImage } from '../storage';
 
 interface CellEditorProps {
     isOpen: boolean;
@@ -18,13 +19,16 @@ interface CellEditorProps {
     onClose: () => void;
 }
 
-// Calculator state - clear separate states as required
 interface CalculatorState {
-    firstOperand: string;        // First number as string
-    secondOperand: string;       // Second number as string
-    operator: '+' | '-' | null;  // Current operator
-    isEnteringSecondOperand: boolean;  // Are we typing the second number?
-    result: string | null;       // Result after pressing =
+    firstOperand: string;
+    secondOperand: string;
+    operator: '+' | '-' | null;
+    isEnteringSecondOperand: boolean;
+    result: string | null;
+}
+
+function generateId(): string {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 export const CellEditor: React.FC<CellEditorProps> = ({
@@ -41,7 +45,7 @@ export const CellEditor: React.FC<CellEditorProps> = ({
     const [code3, setCode3] = useState('');
     const [note, setNote] = useState('');
 
-    // Calculator state with clear separation
+    // Calculator state
     const [calc, setCalc] = useState<CalculatorState>({
         firstOperand: '0',
         secondOperand: '',
@@ -50,8 +54,17 @@ export const CellEditor: React.FC<CellEditorProps> = ({
         result: null,
     });
 
+    // Calculation history: array of step strings like ["4000", "+2000", "+500", "=6500"]
+    const [calcHistory, setCalcHistory] = useState<string[]>([]);
+
+    // Image state
+    const [imageId, setImageId] = useState<string | undefined>(undefined);
+    const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+    const [imageLoading, setImageLoading] = useState(false);
+
     const code3InputRef = useRef<HTMLInputElement>(null);
     const quantityInputRef = useRef<HTMLInputElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Initialize form when cell changes
     useEffect(() => {
@@ -61,6 +74,8 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                 setCode2(cell.code2);
                 setCode3(cell.code3);
                 setNote(cell.note);
+                setCalcHistory(cell.calcHistory || []);
+                setImageId(cell.imageId);
                 setCalc({
                     firstOperand: cell.quantity > 0 ? String(cell.quantity) : '0',
                     secondOperand: '',
@@ -73,6 +88,9 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                 setCode2('');
                 setCode3('');
                 setNote('');
+                setCalcHistory([]);
+                setImageId(undefined);
+                setImagePreviewUrl(null);
                 setCalc({
                     firstOperand: '0',
                     secondOperand: '',
@@ -84,32 +102,36 @@ export const CellEditor: React.FC<CellEditorProps> = ({
         }
     }, [isOpen, cell]);
 
+    // Load image from IndexedDB when imageId changes
+    useEffect(() => {
+        if (!imageId) {
+            setImagePreviewUrl(null);
+            return;
+        }
+        setImageLoading(true);
+        loadImage(imageId).then((url) => {
+            setImagePreviewUrl(url);
+            setImageLoading(false);
+        }).catch(() => {
+            setImagePreviewUrl(null);
+            setImageLoading(false);
+        });
+    }, [imageId]);
+
     // Build display value showing full expression
     const getDisplayValue = (): string => {
-        // If we have a result, show it
-        if (calc.result !== null) {
-            return calc.result;
-        }
-
-        // Build expression string
+        if (calc.result !== null) return calc.result;
         let display = calc.firstOperand || '0';
-
         if (calc.operator) {
             display += ' ' + calc.operator;
-            if (calc.secondOperand) {
-                display += ' ' + calc.secondOperand;
-            }
+            if (calc.secondOperand) display += ' ' + calc.secondOperand;
         }
-
         return display;
     };
 
     // Get the final quantity value for saving
     const getFinalQuantity = (): number => {
-        if (calc.result !== null) {
-            return parseFloat(calc.result) || 0;
-        }
-        // If there's a pending operation, calculate it first
+        if (calc.result !== null) return parseFloat(calc.result) || 0;
         if (calc.operator && calc.secondOperand) {
             const first = parseFloat(calc.firstOperand) || 0;
             const second = parseFloat(calc.secondOperand) || 0;
@@ -121,6 +143,12 @@ export const CellEditor: React.FC<CellEditorProps> = ({
 
     const handleSave = () => {
         const finalQuantity = getFinalQuantity();
+        // If there's a pending expression, finalize it into history before saving
+        let finalHistory = [...calcHistory];
+        if (calc.operator && calc.secondOperand && calc.result === null) {
+            const result = finalQuantity;
+            finalHistory = [...finalHistory, `${calc.operator}${calc.secondOperand}`, `=${result}`];
+        }
 
         const newCell: CellData = {
             row,
@@ -130,13 +158,19 @@ export const CellEditor: React.FC<CellEditorProps> = ({
             code3: code3.toUpperCase().trim(),
             quantity: finalQuantity,
             note: note.trim(),
+            calcHistory: finalHistory.length > 0 ? finalHistory : undefined,
+            imageId,
         };
 
         onSave(newCell);
         onClose();
     };
 
-    const handleDelete = () => {
+    const handleDelete = async () => {
+        // Delete image too if exists
+        if (imageId) {
+            try { await deleteImage(imageId); } catch { /* silent */ }
+        }
         onDelete(row, col);
         onClose();
     };
@@ -144,10 +178,7 @@ export const CellEditor: React.FC<CellEditorProps> = ({
     // Handle typing in the quantity input
     const handleQuantityInput = (e: React.ChangeEvent<HTMLInputElement>) => {
         const inputValue = e.target.value;
-
-        // If result is showing, start fresh
         if (calc.result !== null) {
-            // Only keep numeric characters
             const numericOnly = inputValue.replace(/[^0-9.]/g, '');
             setCalc({
                 firstOperand: numericOnly || '0',
@@ -158,44 +189,30 @@ export const CellEditor: React.FC<CellEditorProps> = ({
             });
             return;
         }
-
-        // Extract the part we're currently editing
-        // The display shows "firstOperand" or "firstOperand + secondOperand"
-        // We need to parse what the user is editing
-
         if (calc.isEnteringSecondOperand) {
-            // User is editing second operand - extract it from the end
             const parts = inputValue.split(/\s*[+\-]\s*/);
             const newSecondOperand = parts[parts.length - 1]?.replace(/[^0-9.]/g, '') || '';
-            setCalc(prev => ({
-                ...prev,
-                secondOperand: newSecondOperand,
-            }));
+            setCalc(prev => ({ ...prev, secondOperand: newSecondOperand }));
         } else if (calc.operator) {
-            // We have an operator but haven't started typing second operand yet
             const parts = inputValue.split(/\s*[+\-]\s*/);
             const newSecondOperand = parts[parts.length - 1]?.replace(/[^0-9.]/g, '') || '';
             if (newSecondOperand) {
-                setCalc(prev => ({
-                    ...prev,
-                    secondOperand: newSecondOperand,
-                    isEnteringSecondOperand: true,
-                }));
+                setCalc(prev => ({ ...prev, secondOperand: newSecondOperand, isEnteringSecondOperand: true }));
             }
         } else {
-            // Editing first operand only
             const numericOnly = inputValue.replace(/[^0-9.]/g, '');
-            setCalc(prev => ({
-                ...prev,
-                firstOperand: numericOnly || '0',
-            }));
+            setCalc(prev => ({ ...prev, firstOperand: numericOnly || '0' }));
         }
     };
 
-    // Handle operator button press (+ or -)
+    // Handle operator button press
     const handleOperator = (op: '+' | '-') => {
-        // If we have a result, use it as first operand
         if (calc.result !== null) {
+            // Push result as first entry if history is fresh
+            const newHistory = calcHistory.length === 0
+                ? [calc.result, `${op}`]
+                : [...calcHistory, `${op}`];
+            setCalcHistory(newHistory);
             setCalc({
                 firstOperand: calc.result,
                 secondOperand: '',
@@ -205,15 +222,13 @@ export const CellEditor: React.FC<CellEditorProps> = ({
             });
             return;
         }
-
-        // If we already have a complete expression, calculate first
         if (calc.operator && calc.secondOperand) {
             const first = parseFloat(calc.firstOperand) || 0;
             const second = parseFloat(calc.secondOperand) || 0;
             let result = 0;
             if (calc.operator === '+') result = first + second;
             if (calc.operator === '-') result = first - second;
-
+            setCalcHistory(prev => [...prev, `${calc.operator}${calc.secondOperand}`]);
             setCalc({
                 firstOperand: String(result),
                 secondOperand: '',
@@ -223,37 +238,37 @@ export const CellEditor: React.FC<CellEditorProps> = ({
             });
             return;
         }
-
-        // Just set the operator, keep first operand, wait for second
+        // Record first operand in history if not yet
+        if (calcHistory.length === 0) {
+            setCalcHistory([calc.firstOperand]);
+        }
         setCalc(prev => ({
             ...prev,
             operator: op,
             secondOperand: '',
             isEnteringSecondOperand: false,
         }));
-
-        // Focus the input to continue typing
         quantityInputRef.current?.focus();
     };
 
     // Handle equals button press
     const handleEquals = () => {
-        // Need both operands and an operator to calculate
-        if (!calc.operator || !calc.secondOperand) {
-            return;
-        }
+        if (!calc.operator || !calc.secondOperand) return;
 
         const first = parseFloat(calc.firstOperand) || 0;
         const second = parseFloat(calc.secondOperand) || 0;
         let result = 0;
+        if (calc.operator === '+') result = first + second;
+        else if (calc.operator === '-') result = first - second;
 
-        if (calc.operator === '+') {
-            result = first + second;
-        } else if (calc.operator === '-') {
-            result = first - second;
-        }
+        // Append step + result to history
+        const newHistory = [
+            ...(calcHistory.length === 0 ? [calc.firstOperand] : calcHistory),
+            `${calc.operator}${calc.secondOperand}`,
+            `=${result}`,
+        ];
+        setCalcHistory(newHistory);
 
-        // Set result and reset for next calculation
         setCalc({
             firstOperand: String(result),
             secondOperand: '',
@@ -262,13 +277,11 @@ export const CellEditor: React.FC<CellEditorProps> = ({
             result: String(result),
         });
 
-        // Keep focus on input
         quantityInputRef.current?.focus();
     };
 
-    // Handle quick number buttons (500, 1000) - append to calculator flow
+    // Handle quick number buttons
     const handleQuickNumber = (num: string) => {
-        // If we have a result, start fresh with this number
         if (calc.result !== null) {
             setCalc({
                 firstOperand: num,
@@ -277,22 +290,15 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                 isEnteringSecondOperand: false,
                 result: null,
             });
+            setCalcHistory([]);
             quantityInputRef.current?.focus();
             return;
         }
-
-        // If we have an operator, set as second operand
         if (calc.operator) {
-            setCalc(prev => ({
-                ...prev,
-                secondOperand: num,
-                isEnteringSecondOperand: true,
-            }));
+            setCalc(prev => ({ ...prev, secondOperand: num, isEnteringSecondOperand: true }));
             quantityInputRef.current?.focus();
             return;
         }
-
-        // Otherwise set as first operand
         setCalc({
             firstOperand: num,
             secondOperand: '',
@@ -300,35 +306,28 @@ export const CellEditor: React.FC<CellEditorProps> = ({
             isEnteringSecondOperand: false,
             result: null,
         });
+        setCalcHistory([]);
         quantityInputRef.current?.focus();
     };
 
-    // Handle direct keyboard input for digits
+    // Handle keydown
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         const key = e.key;
-
-        // Handle operator keys
         if (key === '+' || key === '-') {
             e.preventDefault();
             handleOperator(key as '+' | '-');
             return;
         }
-
-        // Handle equals
         if (key === '=' || key === 'Enter') {
             e.preventDefault();
             handleEquals();
             return;
         }
-
-        // Allow only numeric input, backspace, delete, arrows
         if (!/^[0-9.]$/.test(key) &&
             !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(key)) {
             e.preventDefault();
             return;
         }
-
-        // If result is showing and user types a digit, start fresh
         if (calc.result !== null && /^[0-9.]$/.test(key)) {
             e.preventDefault();
             setCalc({
@@ -338,10 +337,9 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                 isEnteringSecondOperand: false,
                 result: null,
             });
+            setCalcHistory([]);
             return;
         }
-
-        // If we have an operator and no second operand yet, start second operand
         if (calc.operator && !calc.isEnteringSecondOperand && /^[0-9.]$/.test(key)) {
             e.preventDefault();
             setCalc(prev => ({
@@ -351,15 +349,10 @@ export const CellEditor: React.FC<CellEditorProps> = ({
             }));
             return;
         }
-
-        // Continue entering current operand
         if (/^[0-9.]$/.test(key)) {
             e.preventDefault();
             if (calc.isEnteringSecondOperand) {
-                setCalc(prev => ({
-                    ...prev,
-                    secondOperand: prev.secondOperand + key,
-                }));
+                setCalc(prev => ({ ...prev, secondOperand: prev.secondOperand + key }));
             } else {
                 setCalc(prev => ({
                     ...prev,
@@ -371,7 +364,37 @@ export const CellEditor: React.FC<CellEditorProps> = ({
         }
     };
 
-    // Get preview color based on selected code1
+    // Handle image file selection
+    const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+            const dataUrl = ev.target?.result as string;
+            // Delete old image if replacing
+            if (imageId) {
+                try { await deleteImage(imageId); } catch { /* silent */ }
+            }
+            const newId = generateId();
+            await saveImage(newId, dataUrl);
+            setImageId(newId);
+            setImagePreviewUrl(dataUrl);
+        };
+        reader.readAsDataURL(file);
+
+        // Reset input so same file can be re-selected
+        e.target.value = '';
+    };
+
+    const handleRemoveImage = async () => {
+        if (imageId) {
+            try { await deleteImage(imageId); } catch { /* silent */ }
+        }
+        setImageId(undefined);
+        setImagePreviewUrl(null);
+    };
+
     const previewColor = getMaterialColor(code1);
 
     if (!isOpen) return null;
@@ -392,7 +415,6 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                     <div className="form-group">
                         <label>MATERIAL CODE</label>
                         <div className="material-code-inputs">
-                            {/* Code 1 - Prefix Dropdown */}
                             <div className="code-input-wrapper code1-wrapper">
                                 <select
                                     value={code1}
@@ -422,7 +444,6 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                                 </select>
                             </div>
 
-                            {/* Code 2 - Size/Number Dropdown */}
                             <div className="code-input-wrapper code2-wrapper">
                                 <select
                                     value={code2}
@@ -431,14 +452,11 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                                 >
                                     <option value="">—</option>
                                     {CODE2_OPTIONS.map((opt) => (
-                                        <option key={opt} value={opt}>
-                                            {opt}
-                                        </option>
+                                        <option key={opt} value={opt}>{opt}</option>
                                     ))}
                                 </select>
                             </div>
 
-                            {/* Code 3 - Suffix Text Input */}
                             <div className="code-input-wrapper code3-wrapper">
                                 <input
                                     ref={code3InputRef}
@@ -468,56 +486,103 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                                 placeholder="0"
                                 className="quantity-display"
                             />
-                            <button
-                                className="quantity-btn"
-                                onClick={() => handleOperator('+')}
-                                type="button"
-                            >
-                                +
-                            </button>
-                            <button
-                                className="quantity-btn"
-                                onClick={() => handleOperator('-')}
-                                type="button"
-                            >
-                                −
-                            </button>
-                            <button
-                                className="quantity-btn"
-                                onClick={handleEquals}
-                                type="button"
-                            >
-                                =
-                            </button>
+                            <button className="quantity-btn" onClick={() => handleOperator('+')} type="button">+</button>
+                            <button className="quantity-btn" onClick={() => handleOperator('-')} type="button">−</button>
+                            <button className="quantity-btn" onClick={handleEquals} type="button">=</button>
                         </div>
+
                         {/* Quick Number Buttons */}
                         <div className="quick-number-row">
-                            <button
-                                type="button"
-                                className="quantity-btn quick-num-btn"
-                                onClick={() => handleQuickNumber('500')}
-                            >
-                                500
-                            </button>
-                            <button
-                                type="button"
-                                className="quantity-btn quick-num-btn"
-                                onClick={() => handleQuickNumber('1000')}
-                            >
-                                1000
-                            </button>
+                            <button type="button" className="quantity-btn quick-num-btn" onClick={() => handleQuickNumber('500')}>500</button>
+                            <button type="button" className="quantity-btn quick-num-btn" onClick={() => handleQuickNumber('1000')}>1000</button>
                         </div>
+
+                        {/* Calculation History Panel */}
+                        {calcHistory.length > 0 && (
+                            <div className="calc-history-panel">
+                                <div className="calc-history-label">History</div>
+                                <div className="calc-history-steps">
+                                    {calcHistory.map((step, i) => (
+                                        <span
+                                            key={i}
+                                            className={`calc-history-step ${step.startsWith('=') ? 'calc-result' : step.startsWith('+') || step.startsWith('-') ? 'calc-op' : 'calc-base'}`}
+                                        >
+                                            {step}
+                                        </span>
+                                    ))}
+                                </div>
+                                <button
+                                    className="calc-history-clear"
+                                    type="button"
+                                    onClick={() => {
+                                        setCalcHistory([]);
+                                        setCalc({
+                                            firstOperand: '0',
+                                            secondOperand: '',
+                                            operator: null,
+                                            isEnteringSecondOperand: false,
+                                            result: null,
+                                        });
+                                    }}
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                        )}
                     </div>
 
-                    {/* Note Section - Always Visible */}
+                    {/* Note Section */}
                     <div className="form-group">
                         <label>NOTE</label>
                         <textarea
                             value={note}
                             onChange={(e) => setNote(e.target.value)}
                             placeholder="Additional notes..."
-                            rows={4}
+                            rows={3}
                             className="note-textarea"
+                        />
+                    </div>
+
+                    {/* Image Section */}
+                    <div className="form-group image-section">
+                        <label>IMAGE</label>
+
+                        {imageLoading && (
+                            <div className="image-loading">Loading image...</div>
+                        )}
+
+                        {imagePreviewUrl && !imageLoading && (
+                            <div className="image-preview-wrapper">
+                                <img
+                                    src={imagePreviewUrl}
+                                    alt="Cell attachment"
+                                    className="image-preview"
+                                />
+                                <button
+                                    type="button"
+                                    className="image-remove-btn"
+                                    onClick={handleRemoveImage}
+                                    title="Remove image"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        )}
+
+                        <button
+                            type="button"
+                            className="image-add-btn"
+                            onClick={() => fileInputRef.current?.click()}
+                        >
+                            {imagePreviewUrl ? '🔄 Replace Image' : '📷 Add Image'}
+                        </button>
+
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            style={{ display: 'none' }}
+                            onChange={handleImageSelect}
                         />
                     </div>
                 </div>
