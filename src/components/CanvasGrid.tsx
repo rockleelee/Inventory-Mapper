@@ -79,6 +79,7 @@ export const CanvasGrid = forwardRef<CanvasGridHandle, CanvasGridProps>(({
     const initialPinchDistanceRef = useRef<number>(0);
     const initialScaleRef = useRef<number>(1);
     const initialPinchCenterRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const pendingScaleRef = useRef<{ newScale: number; originX: number; originY: number } | null>(null);
 
     // Multi-cell selection (ref-based, no re-render on change)
     const selectedCellsRef = useRef<Set<string>>(new Set());
@@ -576,24 +577,28 @@ export const CanvasGrid = forwardRef<CanvasGridHandle, CanvasGridProps>(({
                     if (Math.sqrt(dx * dx + dy * dy) >= TAP_THRESHOLD) return;
 
                     gestureStateRef.current = 'longPress';
+                    
                     const key = getCellKey(gridPos.row, gridPos.col);
                     const cell = cells.get(key);
 
                     if (cell && cellHasContent(cell)) {
-                        // Long-press on filled cell: first show action menu
-                        // But if shift-click was detected earlier, skip menu and do drag
-                        onLongPress?.(gridPos.row, gridPos.col, currentPointer.x, currentPointer.y);
                         if (navigator.vibrate) navigator.vibrate(40);
+                    } else {
+                        // Small vibration for empty cells
+                        if (navigator.vibrate) navigator.vibrate(20);
                     }
+                    onLongPress?.(gridPos.row, gridPos.col, currentPointer.x, currentPointer.y);
                 }, LONG_PRESS_DURATION);
             }
         } else if (pointerCount === 2) {
             clearLongPressTimer();
+            // Start in a pure two-finger state. Movement logic will decide if it's zooming or panning based on pinch distance vs translation distance.
             gestureStateRef.current = 'zooming';
             const pointers = Array.from(pointersRef.current.values());
             initialPinchDistanceRef.current = getPointerDistance(pointers[0], pointers[1]);
-            initialScaleRef.current = viewport.scale;
+            // Also store the initial center for panning calculations
             initialPinchCenterRef.current = getPointerCenter(pointers[0], pointers[1]);
+            initialScaleRef.current = viewport.scale;
         }
     }, [screenToGrid, cells, viewport.scale, onLongPress]);
 
@@ -601,12 +606,23 @@ export const CanvasGrid = forwardRef<CanvasGridHandle, CanvasGridProps>(({
         const pointer = pointersRef.current.get(e.pointerId);
         if (!pointer) return;
 
+        // Remember previous position for panning calculation
+        const prevX = pointer.x;
+        const prevY = pointer.y;
+
         pointer.x = e.clientX;
         pointer.y = e.clientY;
 
         const pointerCount = pointersRef.current.size;
 
         if (pointerCount === 1) {
+            if (gestureStateRef.current === 'panning') {
+                // Single finger pan is no longer supported to allow easier dragging.
+                // Reset gesture to idle if it slipped into panning
+                gestureStateRef.current = 'idle';
+                return;
+            }
+
             if (gestureStateRef.current === 'dragging') {
                 // Update drag position via ref (no React state — no re-render)
                 dragPosRef.current = { x: e.clientX, y: e.clientY };
@@ -667,26 +683,57 @@ export const CanvasGrid = forwardRef<CanvasGridHandle, CanvasGridProps>(({
                     gestureStateRef.current = 'panning';
                 }
             }
-        } else if (pointerCount === 2 && gestureStateRef.current === 'zooming') {
+        } else if (pointerCount === 2) {
             const pointers = Array.from(pointersRef.current.values());
             const currentDistance = getPointerDistance(pointers[0], pointers[1]);
             const center = getPointerCenter(pointers[0], pointers[1]);
 
-            if (Math.abs(currentDistance - initialPinchDistanceRef.current) > PINCH_THRESHOLD) {
-                const scaleFactor = currentDistance / initialPinchDistanceRef.current;
-                let newScale = initialScaleRef.current * scaleFactor;
-                newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
+            // If we are currently zooming OR panning (with 2 fingers)
+            if (gestureStateRef.current === 'zooming' || gestureStateRef.current === 'panning') {
+                const distanceChange = Math.abs(currentDistance - initialPinchDistanceRef.current);
+                
+                // If fingers pinched/spread enough, force into zooming state
+                if (distanceChange > PINCH_THRESHOLD) {
+                    gestureStateRef.current = 'zooming';
+                } else if (gestureStateRef.current === 'zooming' && distanceChange <= PINCH_THRESHOLD) {
+                    // Provide a threshold where parallel finger movement becomes a pan
+                    const centerDx = Math.abs(center.x - initialPinchCenterRef.current.x);
+                    const centerDy = Math.abs(center.y - initialPinchCenterRef.current.y);
+                    if (centerDx > TAP_THRESHOLD || centerDy > TAP_THRESHOLD) {
+                        gestureStateRef.current = 'panning';
+                    }
+                }
 
-                const rect = canvasRef.current?.getBoundingClientRect();
-                if (rect) {
-                    const cx = center.x - rect.left;
-                    const cy = center.y - rect.top;
-                    const scaleRatio = newScale / viewport.scale;
-                    setViewport(prev => ({
-                        offsetX: cx - (cx - prev.offsetX) * scaleRatio,
-                        offsetY: cy - (cy - prev.offsetY) * scaleRatio,
-                        scale: newScale,
-                    }));
+                if (gestureStateRef.current === 'zooming') {
+                    const scaleFactor = currentDistance / initialPinchDistanceRef.current;
+                    let newScale = initialScaleRef.current * scaleFactor;
+                    newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
+
+                    const container = containerRef.current;
+                    const canvas = canvasRef.current;
+                    if (canvas && container) {
+                        const rect = canvas.getBoundingClientRect();
+                        const originX = center.x - rect.left;
+                        const originY = center.y - rect.top;
+                        
+                        // Hardware accelerated CSS transform
+                        canvas.style.transformOrigin = `${originX}px ${originY}px`;
+                        canvas.style.transform = `scale(${scaleFactor})`;
+                        
+                        pendingScaleRef.current = { newScale, originX, originY };
+                    }
+                } else if (gestureStateRef.current === 'panning') {
+                    // Two-finger pan: calculate delta based on center point movement
+                    const prevCenter = getPointerCenter(
+                        { x: prevX, y: prevY } as PointerData, // Note: not real pointer data but sufficient for delta
+                        pointers.find(p => p.id !== pointer.id) || pointers[0]
+                    );
+                    
+                    if (containerRef.current) {
+                        // Reverse delta because we are moving the "camera" container over the canvas
+                        containerRef.current.scrollLeft -= (center.x - prevCenter.x);
+                        containerRef.current.scrollTop -= (center.y - prevCenter.y);
+                    }
                 }
             }
         }
@@ -769,16 +816,55 @@ export const CanvasGrid = forwardRef<CanvasGridHandle, CanvasGridProps>(({
 
         pointersRef.current.delete(e.pointerId);
 
+        if (gestureStateRef.current === 'zooming') {
+            if (pointersRef.current.size < 2) {
+                const pending = pendingScaleRef.current;
+                gestureStateRef.current = 'idle';
+                pendingScaleRef.current = null;
+                
+                const canvas = canvasRef.current;
+                const container = containerRef.current;
+                
+                if (canvas && pending && container) {
+                    // Lock in the new optical scale by re-rendering canvas at higher res
+                    canvas.style.transform = 'none';
+                    canvas.style.transformOrigin = '0 0';
+                    
+                    const scaleFactor = pending.newScale / viewport.scale;
+                    const scrollDx = pending.originX * (scaleFactor - 1);
+                    const scrollDy = pending.originY * (scaleFactor - 1);
+                    
+                    setViewport(prev => ({
+                        ...prev,
+                        scale: pending.newScale,
+                    }));
+                    
+                    // Allow React effect to redraw, then adjust native scroll
+                    setTimeout(() => {
+                        if (containerRef.current) {
+                            containerRef.current.scrollLeft += scrollDx;
+                            containerRef.current.scrollTop += scrollDy;
+                        }
+                    }, 0);
+                }
+            }
+        }
+
         if (pointersRef.current.size === 0) {
-            gestureStateRef.current = 'idle';
+            if (gestureStateRef.current !== 'idle') {
+                gestureStateRef.current = 'idle';
+            }
             selectionRectRef.current = null;
         } else if (pointersRef.current.size === 1) {
             const remaining = Array.from(pointersRef.current.values())[0];
             remaining.startX = remaining.x;
             remaining.startY = remaining.y;
-            gestureStateRef.current = 'panning';
+            // Removed 'panning' fallback for single finger
+            if (gestureStateRef.current !== 'dragging') {
+                gestureStateRef.current = 'idle';
+            }
         }
-    }, [screenToGrid, onCellTap, onDragEnd, onSelectionChange]);
+    }, [screenToGrid, onCellTap, onDragEnd, onSelectionChange, viewport.scale]);
 
     const handlePointerCancel = useCallback((e: React.PointerEvent) => {
         pointersRef.current.delete(e.pointerId);

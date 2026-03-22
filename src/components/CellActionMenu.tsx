@@ -11,6 +11,7 @@ interface CellActionMenuProps {
     onCopy: () => void;
     onPaste: () => void;
     onClose: () => void;
+    isBuffer?: boolean;
 }
 
 export const CellActionMenu: React.FC<CellActionMenuProps> = ({
@@ -23,6 +24,7 @@ export const CellActionMenu: React.FC<CellActionMenuProps> = ({
     onCopy,
     onPaste,
     onClose,
+    isBuffer,
 }) => {
     const menuRef = useRef<HTMLDivElement>(null);
 
@@ -72,8 +74,8 @@ export const CellActionMenu: React.FC<CellActionMenuProps> = ({
                 disabled={!hasContent}
                 onClick={() => { onMoveToBuffer(); onClose(); }}
             >
-                <span className="cell-action-icon">📦</span>
-                Move to Buffer
+                <span className="cell-action-icon">{isBuffer ? '✂️' : '📦'}</span>
+                {isBuffer ? 'Cut' : 'Move to Buffer'}
             </button>
             <button
                 className="cell-action-item"

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { CanvasGrid, CanvasGridHandle } from './components/CanvasGrid';
-import { CellEditor } from './components/CellEditor';
-import { SummaryPanel } from './components/SummaryPanel';
-import { BufferGridPanel, BufferGridPanelHandle } from './components/BufferGridPanel';
+import SummaryPanel from './components/SummaryPanel';
+import BufferGridPanel, { BufferGridPanelHandle } from './components/BufferGridPanel';
+import CellEditor from './components/CellEditor';
+import CellActionMenu from './components/CellActionMenu';
 import { Toolbar } from './components/Toolbar';
-import { CellActionMenu } from './components/CellActionMenu';
+import DragOverlay from './components/DragOverlay';
 import {
     CellData,
     EditorState,
@@ -363,21 +364,34 @@ const App: React.FC = () => {
         if (!actionMenu) return;
         const { row, col, isBuffer } = actionMenu;
         
-        console.log(`[MoveToBuffer] Triggered for row=${row} col=${col} isBuffer=${isBuffer}`);
-
-        if (isBuffer) return; // already in buffer
+        console.log(`[MoveToBuffer/Cut] Triggered for row=${row} col=${col} isBuffer=${isBuffer}`);
 
         const multiCells = getActionCells(isBuffer);
         const cellsToMove = multiCells.length > 0 ? multiCells : (() => {
-            const c = cells.get(getCellKey(row, col));
+            const map = isBuffer ? bufferCells : cells;
+            const c = map.get(getCellKey(row, col));
             return c && cellHasContent(c) ? [c] : [];
         })();
 
-        console.log(`[MoveToBuffer] cellsToMove count:`, cellsToMove.length, cellsToMove);
+        console.log(`[MoveToBuffer/Cut] cells count:`, cellsToMove.length, cellsToMove);
 
         if (cellsToMove.length === 0) return;
 
-        // Find empty buffer slots
+        if (isBuffer) {
+            // "Cut" behavior: copy to clipboard, delete from buffer
+            clipboardRef.current = cellsToMove.map(c => ({ ...c }));
+            setHasClipboard(true);
+            
+            for (const cell of cellsToMove) {
+                const key = getCellKey(cell.row, cell.col);
+                setBufferCells(prev => { const n = new Map(prev); n.delete(key); return n; });
+                try { await deleteBufferCell(cell.row, cell.col); } catch { /* silent */ }
+            }
+            bufferGridRef.current?.clearSelection();
+            return;
+        }
+
+        // Find empty buffer slots (Move to Buffer from Main)
         const bufferConfig = BUFFER_GRID_CONFIG;
         const usedSlots = new Set(Array.from(bufferCells.keys()));
 
@@ -582,8 +596,11 @@ const App: React.FC = () => {
                     onCopy={handleActionCopy}
                     onPaste={handleActionPaste}
                     onClose={() => setActionMenu(null)}
+                    isBuffer={actionMenu.isBuffer}
                 />
             )}
+            
+            <DragOverlay dragState={crossGridDragState} />
         </div>
     );
 };

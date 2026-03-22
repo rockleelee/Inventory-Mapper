@@ -31,6 +31,7 @@ interface BufferGridPanelProps {
 
 export interface BufferGridPanelHandle {
     checkDropTarget: (x: number, y: number) => { row: number; col: number } | null;
+    clearSelection: () => void;
 }
 
 const TAP_THRESHOLD = 5; // Reduced for mouse sensitivity?
@@ -59,7 +60,6 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
     highlightedCode,
     onCellTap,
     onSummaryItemClick,
-    externalDragState,
     onDragStart,
     onDragMove,
     onDragEnd,
@@ -246,12 +246,15 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
                             const key = getCellKey(gridPos.row, gridPos.col);
                             const cell = bufferCells.get(key);
 
+                            gestureStateRef.current = 'longPress';
+                            
                             if (cell && cellHasContent(cell)) {
-                                // Long-press on filled buffer cell: fire action menu callback
-                                gestureStateRef.current = 'longPress';
-                                onLongPress?.(gridPos.row, gridPos.col, currentPointer.x, currentPointer.y, true);
                                 if (navigator.vibrate) navigator.vibrate(40);
+                            } else {
+                                if (navigator.vibrate) navigator.vibrate(20);
                             }
+                            
+                            onLongPress?.(gridPos.row, gridPos.col, currentPointer.x, currentPointer.y, true);
                         }
                     }
                 }, LONG_PRESS_DURATION);
@@ -264,10 +267,22 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
         const pointer = pointersRef.current.get(e.pointerId);
         if (!pointer) return;
 
+        const prevX = pointer.x;
+        const prevY = pointer.y;
+
         pointer.x = e.clientX;
         pointer.y = e.clientY;
 
         if (pointersRef.current.size === 1) {
+            if (gestureStateRef.current === 'panning') {
+                setViewport((prev) => ({
+                    ...prev,
+                    offsetX: prev.offsetX + (e.clientX - prevX),
+                    offsetY: prev.offsetY + (e.clientY - prevY),
+                }));
+                return;
+            }
+
             if (gestureStateRef.current === 'dragging') {
                 setDragState(prev => ({
                     ...prev,
@@ -304,14 +319,14 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
                         gestureStateRef.current = 'panning';
                         setViewport((prev) => ({
                             ...prev,
-                            offsetX: prev.offsetX + e.movementX,
-                            offsetY: prev.offsetY + e.movementY,
+                            offsetX: prev.offsetX + (e.clientX - prevX),
+                            offsetY: prev.offsetY + (e.clientY - prevY),
                         }));
                     }
                 }
             }
         }
-    }, []);
+    }, [screenToGrid, bufferCells, onDragMove, onDragStart]);
 
     // Handle pointer up
     const handlePointerUp = useCallback((e: React.PointerEvent) => {
@@ -540,100 +555,15 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
         ctx.fillStyle = '#12192a';
         ctx.fillRect(0, 0, rowHeaderWidth * scale + offsetX, headerHeight * scale + offsetY);
 
-        // Draw drag preview
-        if (dragState.isDragging && dragState.sourceCell) {
-            const rect = canvas.getBoundingClientRect();
-            const dx = dragState.currentX - rect.left;
-            const dy = dragState.currentY - rect.top;
+    }, [viewport, config, bufferCells, highlightedCode, highlightAlpha]);
 
-            const dragColor = getMaterialColor(dragState.sourceCell.code1);
-
-            ctx.save();
-            ctx.globalAlpha = 0.8;
-
-            ctx.fillStyle = dragColor.primary;
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-            ctx.shadowBlur = 8;
-            ctx.fillRect(
-                dx - (cellWidth * scale) / 2,
-                dy - (cellHeight * scale) / 2,
-                cellWidth * scale,
-                cellHeight * scale
-            );
-
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = '#ffffff';
-            ctx.font = `bold ${12 * scale}px Inter, sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(getCombinedCode(dragState.sourceCell), dx, dy);
-
-            ctx.restore();
-        }
-
-        // Draw external drag preview (from other grid)
-        if (externalDragState?.isDragging && externalDragState.sourceCell) {
-            // Highlight valid drop target under cursor
-            const targetPos = screenToGrid(externalDragState.currentX, externalDragState.currentY);
-            if (targetPos) {
-                ctx.save();
-                ctx.translate(offsetX, offsetY);
-                ctx.scale(scale, scale);
-
-                const tx = rowHeaderWidth + targetPos.col * cellWidth;
-                const ty = headerHeight + targetPos.row * cellHeight;
-
-                // Green indicator for valid drop
-                ctx.fillStyle = 'rgba(78, 205, 196, 0.3)';
-                ctx.fillRect(tx, ty, cellWidth, cellHeight);
-
-                ctx.strokeStyle = '#4ECDC4';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(tx, ty, cellWidth, cellHeight);
-
-                ctx.restore();
-            }
-
-            // Draw floating cell preview
-            const rect = canvas.getBoundingClientRect();
-            // Check if cursor is roughly over this canvas
-            if (externalDragState.currentX >= rect.left &&
-                externalDragState.currentX <= rect.right &&
-                externalDragState.currentY >= rect.top &&
-                externalDragState.currentY <= rect.bottom) {
-
-                const dx = externalDragState.currentX - rect.left;
-                const dy = externalDragState.currentY - rect.top;
-
-                const dragColor = getMaterialColor(externalDragState.sourceCell.code1);
-
-                ctx.save();
-                ctx.globalAlpha = 0.8;
-
-                ctx.fillStyle = dragColor.primary;
-                ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-                ctx.shadowBlur = 10;
-                ctx.fillRect(
-                    dx - (cellWidth * scale) / 2,
-                    dy - (cellHeight * scale) / 2,
-                    cellWidth * scale,
-                    cellHeight * scale
-                );
-
-                ctx.shadowBlur = 0;
-                ctx.fillStyle = '#ffffff';
-                ctx.font = `bold ${12 * scale}px Inter, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(getCombinedCode(externalDragState.sourceCell), dx, dy);
-
-                ctx.font = `${10 * scale}px Inter, sans-serif`;
-                ctx.fillText(String(externalDragState.sourceCell.quantity), dx, dy + 10 * scale);
-
-                ctx.restore();
-            }
-        }
-    }, [viewport, config, bufferCells, dragState, externalDragState, screenToGrid, highlightedCode, highlightAlpha]);
+    // Redraw on panel expand/collapse finish
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            draw();
+        }, 300); // match CSS transition duration
+        return () => clearTimeout(timer);
+    }, [isCollapsed, draw]);
 
     // Resize canvas
     useEffect(() => {
@@ -668,18 +598,26 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
         draw();
     }, [draw]);
 
-    // Animation loop for drag
+    // Animation loop for highlight pulse (removed drag animation since we use DragOverlay)
     useEffect(() => {
-        if (!dragState.isDragging) return;
+        if (!highlightedCode) return;
 
         let animationId: number;
+        let start = Date.now();
         const animate = () => {
-            draw();
+            const now = Date.now();
+            // simple pulsing alpha between 0.2 and 0.5
+            const alpha = 0.2 + 0.3 * Math.abs(Math.sin((now - start) / 300));
+            setHighlightAlpha(alpha);
             animationId = requestAnimationFrame(animate);
         };
         animationId = requestAnimationFrame(animate);
-        return () => cancelAnimationFrame(animationId);
-    }, [dragState.isDragging, draw]);
+        highlightAnimationRef.current = animationId;
+
+        return () => {
+            cancelAnimationFrame(animationId);
+        };
+    }, [highlightedCode]);
 
     // Expose functionality to parent via ref
     useImperativeHandle(ref, () => ({
@@ -698,6 +636,9 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
                 return pos;
             }
             return null;
+        },
+        clearSelection: () => {
+            // Nothing to do for now, buffer has no multi-select yet
         }
     }), [screenToGrid, bufferCells]);
 
