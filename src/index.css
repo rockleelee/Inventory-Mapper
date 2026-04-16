@@ -209,13 +209,138 @@ body {
   overflow: hidden;
 }
 
-.canvas-container {
+/* ===== Web Grid System ===== */
+.grid-scroll-container {
   flex: 1;
+  overflow: auto;
   position: relative;
+  background-color: var(--bg-primary);
 }
 
-.canvas-container canvas {
-  touch-action: none;
+.buffer-grid-wrapper {
+  overflow: auto;
+  width: 100%;
+  height: 100%;
+  background-color: #12192a;
+}
+
+.grid-container {
+  display: grid;
+  background-color: #2d5a27;
+  padding: var(--spacing-sm);
+  gap: 1px;
+  width: max-content;
+  user-select: none;
+  touch-action: pan-x pan-y;
+}
+
+.buffer-grid-container {
+  display: grid;
+  background-color: #141c2f;
+  padding: var(--spacing-xs);
+  gap: 1px;
+  width: max-content;
+  user-select: none;
+  touch-action: pan-x pan-y;
+}
+
+.grid-cell {
+  background-color: #2a4a7f;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.grid-cell:hover {
+  filter: brightness(1.1);
+}
+
+.grid-cell.boundary-cell {
+  background-color: var(--bg-tertiary);
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 10px,
+    rgba(0, 0, 0, 0.2) 10px,
+    rgba(0, 0, 0, 0.2) 20px
+  );
+  border: 1px dashed var(--text-muted);
+}
+
+.grid-cell.selected {
+  outline: 2px solid #42a5f5;
+  outline-offset: -2px;
+  z-index: 2;
+}
+
+.grid-cell.highlighted {
+  box-shadow: inset 0 0 0 2px rgba(255, 235, 59, 1);
+  animation: highlightPulse 1.5s infinite;
+  z-index: 1;
+}
+
+@keyframes highlightPulse {
+  0% { box-shadow: inset 0 0 0 2px rgba(255, 235, 59, 0.3); }
+  50% { box-shadow: inset 0 0 0 2px rgba(255, 235, 59, 0.8); }
+  100% { box-shadow: inset 0 0 0 2px rgba(255, 235, 59, 0.3); }
+}
+
+.cell-indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+}
+
+.cell-code {
+  position: absolute;
+  left: 8px;
+  top: 30%;
+  transform: translateY(-50%);
+  font-weight: bold;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.cell-code3 {
+  position: absolute;
+  right: 8px;
+  top: 30%;
+  transform: translateY(-50%);
+  font-size: 14px;
+  color: #e8e8e8;
+  white-space: nowrap;
+}
+
+.cell-quantity {
+  position: absolute;
+  left: 50%;
+  top: 72%;
+  transform: translate(-50%, -50%);
+  font-size: 13px;
+  color: #c0c0c0;
+}
+
+.cell-note-indicator {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 10px 10px 0;
+  border-color: transparent #ffc107 transparent transparent;
+}
+
+.cell-image-indicator {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 6px;
+  height: 6px;
+  background-color: #4fc3f7;
+  border-radius: 50%;
 }
 
 /* ===== Summary Panel ===== */

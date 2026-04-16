@@ -44,6 +44,7 @@ export const CellEditor: React.FC<CellEditorProps> = ({
     const [code2, setCode2] = useState('');
     const [code3, setCode3] = useState('');
     const [note, setNote] = useState('');
+    const [isBoundary, setIsBoundary] = useState(false);
 
     // Calculator state
     const [calc, setCalc] = useState<CalculatorState>({
@@ -74,6 +75,7 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                 setCode2(cell.code2);
                 setCode3(cell.code3);
                 setNote(cell.note);
+                setIsBoundary(cell.isBoundary || false);
                 setCalcHistory(cell.calcHistory || []);
                 setImageId(cell.imageId);
                 setCalc({
@@ -88,6 +90,7 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                 setCode2('');
                 setCode3('');
                 setNote('');
+                setIsBoundary(false);
                 setCalcHistory([]);
                 setImageId(undefined);
                 setImagePreviewUrl(null);
@@ -160,6 +163,7 @@ export const CellEditor: React.FC<CellEditorProps> = ({
             note: note.trim(),
             calcHistory: finalHistory.length > 0 ? finalHistory : undefined,
             imageId,
+            isBoundary,
         };
 
         onSave(newCell);
@@ -541,6 +545,19 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                             rows={3}
                             className="note-textarea"
                         />
+                    </div>
+
+                    {/* Boundary Marker Section */}
+                    <div className="form-group checkbox-section">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', textTransform: 'none', letterSpacing: 'normal', color: 'var(--text-primary)', fontSize: 'var(--font-size-md)' }}>
+                            <input
+                                type="checkbox"
+                                checked={isBoundary}
+                                onChange={(e) => setIsBoundary(e.target.checked)}
+                                style={{ width: '18px', height: '18px', cursor: 'pointer', margin: 0 }}
+                            />
+                            Mark as Boundary / Divider Cell
+                        </label>
                     </div>
 
                     {/* Image Section */}

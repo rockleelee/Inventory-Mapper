@@ -1,13 +1,7 @@
-import React, { useRef, useEffect, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useEffect, useCallback, useState, forwardRef, memo } from 'react';
 import {
     CellData,
-    ViewportState,
-    PointerData,
-    GestureState,
-    DragState,
-    CrossGridDragState,
     BUFFER_GRID_CONFIG,
-    getColumnLabel,
     getCellKey,
     cellHasContent,
     getMaterialColor,
@@ -18,23 +12,17 @@ import {
 interface BufferGridPanelProps {
     bufferCells: Map<string, CellData>;
     highlightedCode: string | null;
-    onCellTap: (row: number, col: number) => void;
+    onCellSingleTap: (row: number, col: number) => void;
+    onCellDoubleTap: (row: number, col: number) => void;
     onSummaryItemClick: (combinedCode: string) => void;
-    // Cross-grid drag support
-    externalDragState: CrossGridDragState;
-    onDragStart: (cell: CellData, row: number, col: number) => void;
-    onDragMove: (x: number, y: number) => void;
-    onDragEnd: () => void;
-    // Long-press action menu
     onLongPress?: (row: number, col: number, screenX: number, screenY: number, isBuffer: boolean) => void;
 }
 
 export interface BufferGridPanelHandle {
-    checkDropTarget: (x: number, y: number) => { row: number; col: number } | null;
     clearSelection: () => void;
 }
 
-const TAP_THRESHOLD = 5; // Reduced for mouse sensitivity?
+const TAP_THRESHOLD = 10;
 const LONG_PRESS_DURATION = 500;
 
 // Panel position persistence
@@ -55,51 +43,73 @@ function savePanelPosition(pos: { x: number; y: number }) {
     } catch { }
 }
 
+const GridCell = memo(({ 
+    row, col, cell, isHighlighted 
+}: { 
+    row: number, col: number, cell?: CellData, isHighlighted: boolean 
+}) => {
+    const hasContent = cell && cellHasContent(cell);
+    const materialColor = hasContent ? getMaterialColor(cell.code1) : null;
+    const isBoundary = cell?.isBoundary;
+    
+    return (
+        <div 
+            className={`grid-cell ${hasContent ? 'has-content' : ''} ${isHighlighted ? 'highlighted' : ''} ${isBoundary ? 'boundary-cell' : ''}`}
+            data-row={row} 
+            data-col={col}
+            style={{ 
+                gridRow: row + 2, 
+                gridColumn: col + 2, 
+                backgroundColor: materialColor ? materialColor.background : undefined 
+            }}
+        >
+            {hasContent && materialColor && (
+                <>
+                    <div className="cell-indicator" style={{ backgroundColor: materialColor.primary }} />
+                    <div className="cell-code" style={{ color: materialColor.primary, fontSize: 11, left: 6, top: '40%' }}>
+                        {cell.code1}{cell.code2}
+                    </div>
+                    {cell.quantity > 0 && <div className="cell-quantity" style={{ fontSize: 10, top: '72%' }}>{cell.quantity}</div>}
+                </>
+            )}
+        </div>
+    );
+}, (prev, next) => {
+    if (prev.isHighlighted !== next.isHighlighted) return false;
+    const p = prev.cell;
+    const n = next.cell;
+    if (!!p !== !!n) return false;
+    if (!p && !n) return true;
+    if (p!.code1 !== n!.code1) return false;
+    if (p!.code2 !== n!.code2) return false;
+    if (p!.code3 !== n!.code3) return false;
+    if (p!.quantity !== n!.quantity) return false;
+    if (p!.note !== n!.note) return false;
+    if (p!.isBoundary !== n!.isBoundary) return false;
+    return true;
+});
+
 export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanelProps>(({
     bufferCells,
     highlightedCode,
-    onCellTap,
+    onCellSingleTap,
+    onCellDoubleTap,
     onSummaryItemClick,
-    onDragStart,
-    onDragMove,
-    onDragEnd,
     onLongPress,
 }, ref) => {
     const config = BUFFER_GRID_CONFIG;
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
+
+    React.useImperativeHandle(ref, () => ({
+        clearSelection: () => {
+            // Buffer grid currently relies on global single tap selection for actions
+        }
+    }), []);
 
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [panelPosition, setPanelPosition] = useState(loadPanelPosition);
     const [isDraggingPanel, setIsDraggingPanel] = useState(false);
     const dragOffsetRef = useRef({ x: 0, y: 0 });
-
-    // Viewport state (no zoom for buffer grid, simpler)
-    const [viewport, setViewport] = useState<ViewportState>({
-        offsetX: 0,
-        offsetY: 0,
-        scale: 1,
-    });
-
-    // Gesture tracking
-    const pointersRef = useRef<Map<number, PointerData>>(new Map());
-    const gestureStateRef = useRef<GestureState>('idle');
-    const longPressTimerRef = useRef<number | null>(null);
-
-    // Drag state for cells
-    const [dragState, setDragState] = useState<DragState>({
-        isDragging: false,
-        sourceCell: null,
-        sourceRow: -1,
-        sourceCol: -1,
-        currentX: 0,
-        currentY: 0,
-    });
-
-    // Highlight animation state
-    const [highlightAlpha, setHighlightAlpha] = useState(0.3);
-    const highlightAnimationRef = useRef<number | null>(null);
 
     // Compute summary from buffer cells
     const summaries = React.useMemo(() => {
@@ -180,470 +190,169 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
         };
     }, [isDraggingPanel, panelPosition]);
 
-    // Convert screen coordinates to grid cell
-    const screenToGrid = useCallback((screenX: number, screenY: number): { row: number; col: number } | null => {
-        const canvas = canvasRef.current;
-        if (!canvas) return null;
+    // Pointer event tracking logic for cells
+    const pointerDataRef = useRef<{ id: number; startX: number; startY: number; startTime: number; timer: number | null }>({
+        id: -1, startX: 0, startY: 0, startTime: 0, timer: null
+    });
+    const lastTapRef = useRef<{ row: number; col: number; time: number }>({ row: -1, col: -1, time: 0 });
 
-        const rect = canvas.getBoundingClientRect();
-        const x = (screenX - rect.left - viewport.offsetX) / viewport.scale;
-        const y = (screenY - rect.top - viewport.offsetY) / viewport.scale;
-
-        if (y < config.headerHeight || x < config.rowHeaderWidth) {
-            return null;
-        }
-
-        const col = Math.floor((x - config.rowHeaderWidth) / config.cellWidth);
-        const row = Math.floor((y - config.headerHeight) / config.cellHeight);
-
-        if (row < 0 || row >= config.rows || col < 0 || col >= config.cols) {
-            return null;
-        }
-
+    const getCellPosFromEvent = (e: React.PointerEvent | MouseEvent | TouchEvent): { row: number, col: number } | null => {
+        const target = e.target as HTMLElement;
+        const cellNode = target.closest('.grid-cell') as HTMLElement;
+        if (!cellNode) return null;
+        
+        const row = parseInt(cellNode.getAttribute('data-row') ?? '', 10);
+        const col = parseInt(cellNode.getAttribute('data-col') ?? '', 10);
+        
+        if (isNaN(row) || isNaN(col)) return null;
         return { row, col };
-    }, [viewport, config]);
-
-    const clearLongPressTimer = () => {
-        if (longPressTimerRef.current !== null) {
-            window.clearTimeout(longPressTimerRef.current);
-            longPressTimerRef.current = null;
-        }
     };
 
-    // Handle pointer down on canvas
     const handlePointerDown = useCallback((e: React.PointerEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const canvas = canvasRef.current;
-        if (!canvas) return;
+        if (pointerDataRef.current.id !== -1) return;
+        
+        const pos = getCellPosFromEvent(e);
+        if (!pos) return;
 
-        canvas.setPointerCapture(e.pointerId);
-
-        const pointer: PointerData = {
+        pointerDataRef.current = {
             id: e.pointerId,
-            x: e.clientX,
-            y: e.clientY,
             startX: e.clientX,
             startY: e.clientY,
             startTime: Date.now(),
+            timer: window.setTimeout(() => {
+                const state = pointerDataRef.current;
+                state.timer = null;
+                if (state.id !== -1) {
+                    if (navigator.vibrate) navigator.vibrate(40);
+                    onLongPress?.(pos.row, pos.col, e.clientX, e.clientY, true);
+                    state.id = -1; // reset tracking
+                }
+            }, LONG_PRESS_DURATION)
         };
+        e.preventDefault();
+    }, [onLongPress]);
 
-        pointersRef.current.set(e.pointerId, pointer);
-
-        if (pointersRef.current.size === 1) {
-            gestureStateRef.current = 'idle';
-
-            const gridPos = screenToGrid(e.clientX, e.clientY);
-            if (gridPos) {
-                longPressTimerRef.current = window.setTimeout(() => {
-                    const currentPointer = pointersRef.current.get(e.pointerId);
-                    if (currentPointer && pointersRef.current.size === 1) {
-                        const dx = currentPointer.x - currentPointer.startX;
-                        const dy = currentPointer.y - currentPointer.startY;
-                        const distance = Math.sqrt(dx * dx + dy * dy);
-
-                        if (distance < TAP_THRESHOLD) {
-                            const key = getCellKey(gridPos.row, gridPos.col);
-                            const cell = bufferCells.get(key);
-
-                            gestureStateRef.current = 'longPress';
-                            
-                            if (cell && cellHasContent(cell)) {
-                                if (navigator.vibrate) navigator.vibrate(40);
-                            } else {
-                                if (navigator.vibrate) navigator.vibrate(20);
-                            }
-                            
-                            onLongPress?.(gridPos.row, gridPos.col, currentPointer.x, currentPointer.y, true);
-                        }
-                    }
-                }, LONG_PRESS_DURATION);
-            }
-        }
-    }, [screenToGrid, bufferCells]);
-
-    // Handle pointer move
     const handlePointerMove = useCallback((e: React.PointerEvent) => {
-        const pointer = pointersRef.current.get(e.pointerId);
-        if (!pointer) return;
+        const state = pointerDataRef.current;
+        if (state.id !== e.pointerId) return;
 
-        const prevX = pointer.x;
-        const prevY = pointer.y;
+        const dx = e.clientX - state.startX;
+        const dy = e.clientY - state.startY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
 
-        pointer.x = e.clientX;
-        pointer.y = e.clientY;
-
-        if (pointersRef.current.size === 1) {
-            if (gestureStateRef.current === 'panning') {
-                setViewport((prev) => ({
-                    ...prev,
-                    offsetX: prev.offsetX + (e.clientX - prevX),
-                    offsetY: prev.offsetY + (e.clientY - prevY),
-                }));
-                return;
-            }
-
-            if (gestureStateRef.current === 'dragging') {
-                setDragState(prev => ({
-                    ...prev,
-                    currentX: e.clientX,
-                    currentY: e.clientY,
-                }));
-                // Notify parent for cross-grid coordination
-                onDragMove?.(e.clientX, e.clientY);
-            } else if (gestureStateRef.current !== 'longPress') {
-                const dx = pointer.x - pointer.startX;
-                const dy = pointer.y - pointer.startY;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-
-                if (distance > TAP_THRESHOLD) {
-                    clearLongPressTimer();
-
-                    const gridPos = screenToGrid(pointer.startX, pointer.startY);
-                    const key = gridPos ? getCellKey(gridPos.row, gridPos.col) : null;
-                    const cell = key ? bufferCells.get(key) : null;
-
-                    if (cell && cellHasContent(cell)) {
-                        gestureStateRef.current = 'dragging';
-                        setDragState({
-                            isDragging: true,
-                            sourceCell: cell,
-                            sourceRow: gridPos!.row,
-                            sourceCol: gridPos!.col,
-                            currentX: e.clientX,
-                            currentY: e.clientY,
-                        });
-                        onDragStart?.(cell, gridPos!.row, gridPos!.col);
-                        if (navigator.vibrate) navigator.vibrate(50);
-                    } else {
-                        gestureStateRef.current = 'panning';
-                        setViewport((prev) => ({
-                            ...prev,
-                            offsetX: prev.offsetX + (e.clientX - prevX),
-                            offsetY: prev.offsetY + (e.clientY - prevY),
-                        }));
-                    }
-                }
+        if (distance > TAP_THRESHOLD) {
+            if (state.timer !== null) {
+                window.clearTimeout(state.timer);
+                state.timer = null;
             }
         }
-    }, [screenToGrid, bufferCells, onDragMove, onDragStart]);
+    }, []);
 
-    // Handle pointer up
     const handlePointerUp = useCallback((e: React.PointerEvent) => {
-        const canvas = canvasRef.current;
-        if (canvas) {
-            canvas.releasePointerCapture(e.pointerId);
+        const state = pointerDataRef.current;
+        if (state.id !== e.pointerId) return;
+
+        if (state.timer !== null) {
+            window.clearTimeout(state.timer);
+            state.timer = null;
         }
 
-        const pointer = pointersRef.current.get(e.pointerId);
-        clearLongPressTimer();
+        const dx = e.clientX - state.startX;
+        const dy = e.clientY - state.startY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const duration = Date.now() - state.startTime;
 
-        if (pointer && pointersRef.current.size === 1) {
-            const dx = pointer.x - pointer.startX;
-            const dy = pointer.y - pointer.startY;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            const duration = Date.now() - pointer.startTime;
-
-            if (gestureStateRef.current === 'dragging') {
-                /* REFACTOR: Rely on parent onDragEnd for single drop handling */
-                // if (targetPos && dragState.sourceCell) {
-                //     onCellDrop(...)
-                // }
-                // If targetPos is null, dragEnd callback will handle cross-grid scenario
-
-                setDragState({
-                    isDragging: false,
-                    sourceCell: null,
-                    sourceRow: -1,
-                    sourceCol: -1,
-                    currentX: 0,
-                    currentY: 0,
-                });
-
-                // Notify parent that drag ended
-                onDragEnd?.();
-            } else if (gestureStateRef.current === 'idle' && distance < TAP_THRESHOLD && duration < LONG_PRESS_DURATION) {
-                const gridPos = screenToGrid(pointer.startX, pointer.startY);
-                if (gridPos) {
-                    onCellTap(gridPos.row, gridPos.col);
+        if (distance < TAP_THRESHOLD && duration < LONG_PRESS_DURATION) {
+            const pos = getCellPosFromEvent(e);
+            if (pos) {
+                const now = Date.now();
+                const lastTap = lastTapRef.current;
+                if (lastTap.row === pos.row && lastTap.col === pos.col && now - lastTap.time < 300) {
+                    onCellDoubleTap(pos.row, pos.col);
+                    lastTapRef.current = { row: -1, col: -1, time: 0 };
+                } else {
+                    onCellSingleTap(pos.row, pos.col);
+                    lastTapRef.current = { row: pos.row, col: pos.col, time: now };
                 }
             }
         }
 
-        pointersRef.current.delete(e.pointerId);
+        state.id = -1;
+    }, [onCellSingleTap, onCellDoubleTap]);
 
-        if (pointersRef.current.size === 0) {
-            gestureStateRef.current = 'idle';
-        }
-    }, [screenToGrid, onCellTap, dragState, onDragEnd]);
-
-    // Highlight animation effect
-    useEffect(() => {
-        if (!highlightedCode) {
-            setHighlightAlpha(0.3);
-            if (highlightAnimationRef.current) {
-                cancelAnimationFrame(highlightAnimationRef.current);
-            }
-            return;
-        }
-
-        let startTime: number | null = null;
-        const duration = 1500; // 1.5 seconds
-
-        const animate = (timestamp: number) => {
-            if (!startTime) startTime = timestamp;
-            const elapsed = timestamp - startTime;
-            const progress = elapsed / duration;
-
-            if (progress >= 1) {
-                setHighlightAlpha(0.3);
-                return;
-            }
-
-            // Pulsing effect: 0.2 -> 0.5 -> 0.2
-            const pulse = Math.sin(progress * Math.PI * 3) * 0.15 + 0.35;
-            setHighlightAlpha(pulse);
-
-            highlightAnimationRef.current = requestAnimationFrame(animate);
-        };
-
-        highlightAnimationRef.current = requestAnimationFrame(animate);
-
-        return () => {
-            if (highlightAnimationRef.current) {
-                cancelAnimationFrame(highlightAnimationRef.current);
-            }
-        };
-    }, [highlightedCode]);
-
-    // Draw the grid
-    const draw = useCallback(() => {
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext('2d');
-        if (!canvas || !ctx) return;
-
-        const { width, height } = canvas;
-        const { offsetX, offsetY, scale } = viewport;
-        const { cellWidth, cellHeight, headerHeight, rowHeaderWidth, rows, cols } = config;
-
-        // Clear canvas - slightly darker background for buffer
-        ctx.fillStyle = '#12192a';
-        ctx.fillRect(0, 0, width, height);
-
-        ctx.save();
-        ctx.translate(offsetX, offsetY);
-        ctx.scale(scale, scale);
-
-        // Draw cells background
-        ctx.fillStyle = '#141c2f';
-        ctx.fillRect(rowHeaderWidth, headerHeight, cols * cellWidth, rows * cellHeight);
-
-        // Draw grid lines
-        ctx.strokeStyle = '#0a1225';
-        ctx.lineWidth = 1;
-
-        for (let col = 0; col <= cols; col++) {
-            const x = rowHeaderWidth + col * cellWidth;
-            ctx.beginPath();
-            ctx.moveTo(x, headerHeight);
-            ctx.lineTo(x, headerHeight + rows * cellHeight);
-            ctx.stroke();
-        }
-
-        for (let row = 0; row <= rows; row++) {
-            const y = headerHeight + row * cellHeight;
-            ctx.beginPath();
-            ctx.moveTo(rowHeaderWidth, y);
-            ctx.lineTo(rowHeaderWidth + cols * cellWidth, y);
-            ctx.stroke();
-        }
-
-        // Draw cells with content
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-
-        for (let row = 0; row < rows; row++) {
-            for (let col = 0; col < cols; col++) {
-                const key = getCellKey(row, col);
-                const cell = bufferCells.get(key);
-
-                if (cell && cellHasContent(cell)) {
-                    const x = rowHeaderWidth + col * cellWidth;
-                    const y = headerHeight + row * cellHeight;
-
-                    const materialColor = getMaterialColor(cell.code1);
-
-                    ctx.fillStyle = materialColor.background;
-                    ctx.fillRect(x + 1, y + 1, cellWidth - 2, cellHeight - 2);
-
-                    ctx.fillStyle = materialColor.primary;
-                    ctx.fillRect(x + 1, y + 1, 3, cellHeight - 2);
-
-                    const padding = 6;
-                    const fontSize = Math.min(11, cellHeight * 0.32);
-
-                    const combinedLabel = cell.code1 + cell.code2;
-                    if (combinedLabel) {
-                        ctx.fillStyle = materialColor.primary;
-                        ctx.font = `bold ${fontSize}px Inter, sans-serif`;
-                        ctx.textAlign = 'left';
-                        ctx.fillText(combinedLabel, x + padding, y + cellHeight * 0.35);
-                    }
-
-                    if (cell.quantity > 0) {
-                        ctx.fillStyle = '#c0c0c0';
-                        ctx.font = `${Math.min(10, cellHeight * 0.28)}px Inter, sans-serif`;
-                        ctx.textAlign = 'center';
-                        ctx.fillText(String(cell.quantity), x + cellWidth / 2, y + cellHeight * 0.72);
-                    }
-
-                    // Highlight overlay if this cell matches highlighted code
-                    if (highlightedCode) {
-                        const cellCode = getCombinedCode(cell);
-                        if (cellCode === highlightedCode) {
-                            ctx.fillStyle = `rgba(255, 235, 59, ${highlightAlpha})`;
-                            ctx.fillRect(x + 1, y + 1, cellWidth - 2, cellHeight - 2);
-                        }
-                    }
-                }
-            }
-        }
-
-        ctx.restore();
-
-        // Draw column headers
-        ctx.fillStyle = '#1a2235';
-        ctx.fillRect(offsetX + rowHeaderWidth * scale, 0, cols * cellWidth * scale, headerHeight * scale);
-
-        ctx.save();
-        ctx.translate(offsetX, 0);
-        ctx.scale(scale, scale);
-
-        ctx.fillStyle = '#6b7280';
-        ctx.font = `${10}px Inter, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        for (let col = 0; col < cols; col++) {
-            const x = rowHeaderWidth + col * cellWidth + cellWidth / 2;
-            ctx.fillText(getColumnLabel(col), x, headerHeight / 2);
-        }
-
-        ctx.restore();
-
-        // Draw row headers
-        ctx.fillStyle = '#1a2235';
-        ctx.fillRect(0, offsetY + headerHeight * scale, rowHeaderWidth * scale, rows * cellHeight * scale);
-
-        ctx.save();
-        ctx.translate(0, offsetY);
-        ctx.scale(scale, scale);
-
-        ctx.fillStyle = '#6b7280';
-        ctx.font = `${10}px Inter, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        for (let row = 0; row < rows; row++) {
-            const y = headerHeight + row * cellHeight + cellHeight / 2;
-            ctx.fillText(String(row + 1), rowHeaderWidth / 2, y);
-        }
-
-        ctx.restore();
-
-        // Draw corner
-        ctx.fillStyle = '#12192a';
-        ctx.fillRect(0, 0, rowHeaderWidth * scale + offsetX, headerHeight * scale + offsetY);
-
-    }, [viewport, config, bufferCells, highlightedCode, highlightAlpha]);
-
-    // Redraw on panel expand/collapse finish
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            draw();
-        }, 300); // match CSS transition duration
-        return () => clearTimeout(timer);
-    }, [isCollapsed, draw]);
-
-    // Resize canvas
-    useEffect(() => {
-        const container = containerRef.current;
-        const canvas = canvasRef.current;
-        if (!container || !canvas) return;
-
-        const resizeObserver = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                const { width, height } = entry.contentRect;
-                const dpr = window.devicePixelRatio || 1;
-                canvas.width = width * dpr;
-                canvas.height = height * dpr;
-                canvas.style.width = `${width}px`;
-                canvas.style.height = `${height}px`;
-
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    ctx.scale(dpr, dpr);
-                }
-
-                draw();
-            }
-        });
-
-        resizeObserver.observe(container);
-        return () => resizeObserver.disconnect();
-    }, [draw]);
-
-    // Redraw on state change
-    useEffect(() => {
-        draw();
-    }, [draw]);
-
-    // Animation loop for highlight pulse (removed drag animation since we use DragOverlay)
-    useEffect(() => {
-        if (!highlightedCode) return;
-
-        let animationId: number;
-        let start = Date.now();
-        const animate = () => {
-            const now = Date.now();
-            // simple pulsing alpha between 0.2 and 0.5
-            const alpha = 0.2 + 0.3 * Math.abs(Math.sin((now - start) / 300));
-            setHighlightAlpha(alpha);
-            animationId = requestAnimationFrame(animate);
-        };
-        animationId = requestAnimationFrame(animate);
-        highlightAnimationRef.current = animationId;
-
-        return () => {
-            cancelAnimationFrame(animationId);
-        };
-    }, [highlightedCode]);
-
-    // Expose functionality to parent via ref
-    useImperativeHandle(ref, () => ({
-        checkDropTarget: (x: number, y: number) => {
-            const canvas = canvasRef.current;
-            if (!canvas) return null;
-            const rect = canvas.getBoundingClientRect();
-            if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-                const pos = screenToGrid(x, y);
-                if (!pos) return null;
-                // Only allow drop on EMPTY buffer cells
-                const targetKey = getCellKey(pos.row, pos.col);
-                if (bufferCells.has(targetKey) && cellHasContent(bufferCells.get(targetKey)!)) {
-                    return null;
-                }
-                return pos;
-            }
-            return null;
-        },
-        clearSelection: () => {
-            // Nothing to do for now, buffer has no multi-select yet
-        }
-    }), [screenToGrid, bufferCells]);
+    const handlePointerCancel = useCallback(() => {
+        const state = pointerDataRef.current;
+        if (state.timer !== null) window.clearTimeout(state.timer);
+        state.id = -1;
+        state.timer = null;
+    }, []);
 
     const gridWidth = config.cols * config.cellWidth + config.rowHeaderWidth;
     const gridHeight = config.rows * config.cellHeight + config.headerHeight;
+
+    const gridElements = [];
+    
+    // Top-left corner
+    gridElements.push(
+        <div key="header-corner" style={{ 
+            gridRow: 1, gridColumn: 1, backgroundColor: '#12192a', 
+            position: 'sticky', top: 0, left: 0, zIndex: 10 
+        }} />
+    );
+
+    // Column headers
+    for (let c = 0; c < config.cols; c++) {
+        let colLabel = '';
+        let n = c;
+        while (n >= 0) {
+            colLabel = String.fromCharCode(65 + (n % 26)) + colLabel;
+            n = Math.floor(n / 26) - 1;
+        }
+
+        gridElements.push(
+            <div key={`header-col-${c}`} style={{ 
+                gridRow: 1, gridColumn: c + 2, 
+                backgroundColor: '#1a2235', color: '#6b7280', 
+                fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                position: 'sticky', top: 0, zIndex: 5
+            }}>
+                {colLabel}
+            </div>
+        );
+    }
+
+    // Row headers
+    for (let r = 0; r < config.rows; r++) {
+        gridElements.push(
+            <div key={`header-row-${r}`} style={{ 
+                gridRow: r + 2, gridColumn: 1, 
+                backgroundColor: '#1a2235', color: '#6b7280', 
+                fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                position: 'sticky', left: 0, zIndex: 5
+            }}>
+                {r + 1}
+            </div>
+        );
+    }
+
+    // Active Cells Data Loop
+    for (let r = 0; r < config.rows; r++) {
+        for (let c = 0; c < config.cols; c++) {
+            const key = getCellKey(r, c);
+            const cell = bufferCells.get(key);
+            const isHighlighted = highlightedCode ? (cell && getCombinedCode(cell) === highlightedCode) : false;
+
+            gridElements.push(
+                <GridCell 
+                    key={key} 
+                    row={r} 
+                    col={c} 
+                    cell={cell} 
+                    isHighlighted={isHighlighted || false} 
+                />
+            );
+        }
+    }
 
     return (
         <div
@@ -677,24 +386,26 @@ export const BufferGridPanel = forwardRef<BufferGridPanelHandle, BufferGridPanel
             {!isCollapsed && (
                 <div className="buffer-panel-content">
                     <div
-                        ref={containerRef}
-                        className="buffer-grid-container"
+                        className="buffer-grid-wrapper"
                         style={{
-                            width: Math.min(gridWidth, 350),
-                            height: Math.min(gridHeight, 250),
+                            width: Math.min(gridWidth + 20, 350),
+                            height: Math.min(gridHeight + 20, 250),
                         }}
                     >
-                        <canvas
-                            ref={canvasRef}
+                        <div 
+                            className="buffer-grid-container"
+                            style={{
+                                gridTemplateColumns: `${config.rowHeaderWidth}px repeat(${config.cols}, ${config.cellWidth}px)`,
+                                gridTemplateRows: `${config.headerHeight}px repeat(${config.rows}, ${config.cellHeight}px)`
+                            }}
                             onPointerDown={handlePointerDown}
                             onPointerMove={handlePointerMove}
                             onPointerUp={handlePointerUp}
-                            style={{
-                                display: 'block',
-                                cursor: dragState.isDragging ? 'grabbing' : 'default',
-                                touchAction: 'none',
-                            }}
-                        />
+                            onPointerCancel={handlePointerCancel}
+                            onContextMenu={(e) => e.preventDefault()}
+                        >
+                            {gridElements}
+                        </div>
                     </div>
 
                     {summaries.length > 0 && (

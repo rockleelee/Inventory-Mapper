@@ -5,7 +5,6 @@ import BufferGridPanel, { BufferGridPanelHandle } from './components/BufferGridP
 import CellEditor from './components/CellEditor';
 import CellActionMenu from './components/CellActionMenu';
 import { Toolbar } from './components/Toolbar';
-import DragOverlay from './components/DragOverlay';
 import {
     CellData,
     EditorState,
@@ -13,8 +12,6 @@ import {
     BUFFER_GRID_CONFIG,
     getCellKey,
     cellHasContent,
-    CrossGridDragState,
-    GridType,
 } from './types';
 import {
     loadAllCells,
@@ -46,6 +43,7 @@ const App: React.FC = () => {
     const [bufferCells, setBufferCells] = useState<Map<string, CellData>>(new Map());
     const [isLoading, setIsLoading] = useState(true);
     const [summaryExpanded, setSummaryExpanded] = useState(false);
+    const [isSelectMode, setIsSelectMode] = useState(false);
 
     const [highlightedCode, setHighlightedCode] = useState<string | null>(null);
     const [bufferHighlightedCode, setBufferHighlightedCode] = useState<string | null>(null);
@@ -65,20 +63,9 @@ const App: React.FC = () => {
     const clipboardRef = useRef<CellData[]>([]);
     const [hasClipboard, setHasClipboard] = useState(false);
 
-    // Refs for cross-grid hit testing
+    // Refs for hit testing / selection
     const mainGridRef = React.useRef<CanvasGridHandle>(null);
     const bufferGridRef = React.useRef<BufferGridPanelHandle>(null);
-
-    // Cross-grid drag state
-    const [crossGridDragState, setCrossGridDragState] = useState<CrossGridDragState>({
-        isDragging: false,
-        sourceCell: null,
-        sourceRow: -1,
-        sourceCol: -1,
-        currentX: 0,
-        currentY: 0,
-        sourceGrid: null,
-    });
 
     // Load cells from storage on mount
     useEffect(() => {
@@ -114,14 +101,24 @@ const App: React.FC = () => {
         }
     }, [bufferHighlightedCode]);
 
-    // ── Cell tap → open editor ────────────────────────────────────────────────
-    const handleCellTap = useCallback((row: number, col: number) => {
+    // ── Cell tap → Single: Select, Double: Edit ────────────────────────────────
+    const handleCellSingleTap = useCallback((row: number, col: number) => {
+        if (isSelectMode) {
+            mainGridRef.current?.toggleSelection(getCellKey(row, col));
+        }
+    }, [isSelectMode]);
+
+    const handleCellDoubleTap = useCallback((row: number, col: number) => {
         const key = getCellKey(row, col);
         const cell = cells.get(key) || null;
         setEditorState({ isOpen: true, cell, row, col, isBuffer: false });
     }, [cells]);
 
-    const handleBufferCellTap = useCallback((row: number, col: number) => {
+    const handleBufferCellSingleTap = useCallback((_row: number, _col: number) => {
+        // Just for consistency, we could support buffer selection later or do nothing now
+    }, []);
+
+    const handleBufferCellDoubleTap = useCallback((row: number, col: number) => {
         const key = getCellKey(row, col);
         const cell = bufferCells.get(key) || null;
         setEditorState({ isOpen: true, cell, row, col, isBuffer: true });
@@ -191,136 +188,6 @@ const App: React.FC = () => {
         setBufferHighlightedCode(combinedCode);
     }, []);
 
-    // ── Cross-grid drag ───────────────────────────────────────────────────────
-    const handleDragStart = useCallback((cell: CellData, row: number, col: number, sourceGrid: GridType) => {
-        setCrossGridDragState(prev => ({
-            ...prev,
-            isDragging: true,
-            sourceCell: cell,
-            sourceRow: row,
-            sourceCol: col,
-            sourceGrid,
-            dropHandled: false,
-        }));
-    }, []);
-
-    const handleDragMove = useCallback((x: number, y: number) => {
-        setCrossGridDragState(prev => ({ ...prev, currentX: x, currentY: y }));
-    }, []);
-
-    const handleCrossGridDrop = useCallback(async (
-        sourceGrid: GridType,
-        targetGrid: GridType,
-        cell: CellData,
-        targetRow: number,
-        targetCol: number
-    ) => {
-        console.log(`[CrossGridDrop] src=${sourceGrid} target=${targetGrid} cell=${cell.code1} targetLoc=${targetRow},${targetCol}`);
-        const targetKey = getCellKey(targetRow, targetCol);
-
-        let targetCellExisting: CellData | undefined;
-        if (targetGrid === 'main') targetCellExisting = cells.get(targetKey);
-        else targetCellExisting = bufferCells.get(targetKey);
-
-        const newTargetCell: CellData = { ...cell, row: targetRow, col: targetCol };
-        let newSourceCell: CellData | null = null;
-
-        if (targetCellExisting && cellHasContent(targetCellExisting)) {
-            newSourceCell = { ...targetCellExisting, row: cell.row, col: cell.col };
-        }
-
-        console.log(`[CrossGridDrop] Existing Target Cell:`, targetCellExisting);
-
-        if (sourceGrid === targetGrid) {
-            const isMain = sourceGrid === 'main';
-            if (isMain) {
-                setCells(prev => {
-                    const next = new Map(prev);
-                    next.set(targetKey, newTargetCell);
-                    if (newSourceCell) next.set(getCellKey(cell.row, cell.col), newSourceCell);
-                    else if (getCellKey(cell.row, cell.col) !== targetKey) next.delete(getCellKey(cell.row, cell.col));
-                    return next;
-                });
-                await saveCell(newTargetCell);
-                if (newSourceCell) await saveCell(newSourceCell);
-                else if (getCellKey(cell.row, cell.col) !== targetKey) await deleteCell(cell.row, cell.col);
-            } else {
-                setBufferCells(prev => {
-                    const next = new Map(prev);
-                    next.set(targetKey, newTargetCell);
-                    if (newSourceCell) next.set(getCellKey(cell.row, cell.col), newSourceCell);
-                    else if (getCellKey(cell.row, cell.col) !== targetKey) next.delete(getCellKey(cell.row, cell.col));
-                    return next;
-                });
-                await saveBufferCell(newTargetCell);
-                if (newSourceCell) await saveBufferCell(newSourceCell);
-                else if (getCellKey(cell.row, cell.col) !== targetKey) await deleteBufferCell(cell.row, cell.col);
-            }
-        } else {
-            // Cross-grid
-            console.log(`[CrossGridDrop] Updating maps for cross grid! Target is ${targetGrid}`);
-            if (targetGrid === 'main') {
-                setCells(prev => { const n = new Map(prev); n.set(targetKey, newTargetCell); return n; });
-                await saveCell(newTargetCell);
-            } else {
-                setBufferCells(prev => { const n = new Map(prev); n.set(targetKey, newTargetCell); return n; });
-                await saveBufferCell(newTargetCell);
-            }
-            if (sourceGrid === 'main') {
-                setCells(prev => {
-                    const n = new Map(prev);
-                    if (newSourceCell) n.set(getCellKey(cell.row, cell.col), newSourceCell);
-                    else n.delete(getCellKey(cell.row, cell.col));
-                    return n;
-                });
-                if (newSourceCell) await saveCell(newSourceCell);
-                else await deleteCell(cell.row, cell.col);
-            } else {
-                setBufferCells(prev => {
-                    const n = new Map(prev);
-                    if (newSourceCell) n.set(getCellKey(cell.row, cell.col), newSourceCell);
-                    else n.delete(getCellKey(cell.row, cell.col));
-                    return n;
-                });
-                if (newSourceCell) await saveBufferCell(newSourceCell);
-                else await deleteBufferCell(cell.row, cell.col);
-            }
-        }
-    }, [cells, bufferCells]);
-
-    const handleDragEnd = useCallback(() => {
-        const { isDragging, sourceCell, sourceGrid, currentX, currentY, dropHandled } = crossGridDragState;
-        console.log(`[DragEnd] isDragging=${isDragging} srcGrid=${sourceGrid} currentX=${currentX} currentY=${currentY} handled=${dropHandled}`);
-        
-        if (dropHandled) return;
-
-        if (isDragging && sourceCell && sourceGrid) {
-            const bufferDrop = bufferGridRef.current?.checkDropTarget(currentX ?? 0, currentY ?? 0);
-            console.log(`[DragEnd] bufferDrop evaluated:`, bufferDrop);
-            
-            if (bufferDrop) {
-                handleCrossGridDrop(sourceGrid, 'buffer', sourceCell, bufferDrop.row, bufferDrop.col);
-            } else {
-                const mainDrop = mainGridRef.current?.checkDropTarget(currentX ?? 0, currentY ?? 0);
-                console.log(`[DragEnd] mainDrop evaluated:`, mainDrop);
-                
-                if (mainDrop) {
-                    handleCrossGridDrop(sourceGrid, 'main', sourceCell, mainDrop.row, mainDrop.col);
-                }
-            }
-        }
-
-        setCrossGridDragState({
-            isDragging: false,
-            sourceCell: null,
-            sourceRow: -1,
-            sourceCol: -1,
-            currentX: 0,
-            currentY: 0,
-            sourceGrid: null,
-            dropHandled: true,
-        });
-    }, [crossGridDragState, handleCrossGridDrop]);
 
     // ── ACTION MENU CALLBACKS ────────────────────────────────────────────────
 
@@ -364,8 +231,6 @@ const App: React.FC = () => {
         if (!actionMenu) return;
         const { row, col, isBuffer } = actionMenu;
         
-        console.log(`[MoveToBuffer/Cut] Triggered for row=${row} col=${col} isBuffer=${isBuffer}`);
-
         const multiCells = getActionCells(isBuffer);
         const cellsToMove = multiCells.length > 0 ? multiCells : (() => {
             const map = isBuffer ? bufferCells : cells;
@@ -373,20 +238,37 @@ const App: React.FC = () => {
             return c && cellHasContent(c) ? [c] : [];
         })();
 
-        console.log(`[MoveToBuffer/Cut] cells count:`, cellsToMove.length, cellsToMove);
-
         if (cellsToMove.length === 0) return;
 
         if (isBuffer) {
-            // "Cut" behavior: copy to clipboard, delete from buffer
-            clipboardRef.current = cellsToMove.map(c => ({ ...c }));
-            setHasClipboard(true);
-            
-            for (const cell of cellsToMove) {
-                const key = getCellKey(cell.row, cell.col);
-                setBufferCells(prev => { const n = new Map(prev); n.delete(key); return n; });
-                try { await deleteBufferCell(cell.row, cell.col); } catch { /* silent */ }
+            // Find empty slots in main grid (Move to Buffer from Buffer = Move to Main Grid)
+            const mainConfig = DEFAULT_GRID_CONFIG;
+            const usedSlots = new Set(Array.from(cells.keys()));
+
+            for (const srcCell of cellsToMove) {
+                // Find first empty main slot
+                let placed = false;
+                outer: for (let r = 0; r < mainConfig.rows; r++) {
+                    for (let c = 0; c < mainConfig.cols; c++) {
+                        const mKey = getCellKey(r, c);
+                        if (!usedSlots.has(mKey)) {
+                            const newCell: CellData = { ...srcCell, row: r, col: c };
+                            setCells(prev => { const n = new Map(prev); n.set(mKey, newCell); return n; });
+                            try { await saveCell(newCell); } catch { /* silent */ }
+                            usedSlots.add(mKey);
+                            placed = true;
+                            break outer;
+                        }
+                    }
+                }
+                if (!placed) break; // main grid full
+
+                // Remove from buffer
+                const srcKey = getCellKey(srcCell.row, srcCell.col);
+                setBufferCells(prev => { const n = new Map(prev); n.delete(srcKey); return n; });
+                try { await deleteBufferCell(srcCell.row, srcCell.col); } catch { /* silent */ }
             }
+
             bufferGridRef.current?.clearSelection();
             return;
         }
@@ -539,6 +421,8 @@ const App: React.FC = () => {
                 onClearAll={handleClearAll}
                 onExport={handleExport}
                 onImport={handleImport}
+                isSelectMode={isSelectMode}
+                onToggleSelectMode={() => setIsSelectMode(!isSelectMode)}
             />
 
             <div className="main-content">
@@ -546,11 +430,9 @@ const App: React.FC = () => {
                     ref={mainGridRef}
                     config={DEFAULT_GRID_CONFIG}
                     cells={cells}
-                    onCellTap={handleCellTap}
+                    onCellSingleTap={handleCellSingleTap}
+                    onCellDoubleTap={handleCellDoubleTap}
                     highlightedCode={highlightedCode}
-                    externalDragState={crossGridDragState}
-                    onDragMove={handleDragMove}
-                    onDragEnd={handleDragEnd}
                     onLongPress={(row, col, x, y) => handleLongPress(row, col, x, y, false)}
                 />
 
@@ -566,12 +448,9 @@ const App: React.FC = () => {
                 ref={bufferGridRef}
                 bufferCells={bufferCells}
                 highlightedCode={bufferHighlightedCode}
-                onCellTap={handleBufferCellTap}
+                onCellSingleTap={handleBufferCellSingleTap}
+                onCellDoubleTap={handleBufferCellDoubleTap}
                 onSummaryItemClick={handleBufferSummaryItemClick}
-                externalDragState={crossGridDragState}
-                onDragStart={(cell, row, col) => handleDragStart(cell, row, col, 'buffer')}
-                onDragMove={handleDragMove}
-                onDragEnd={handleDragEnd}
                 onLongPress={(row, col, x, y, isBuffer) => handleLongPress(row, col, x, y, isBuffer)}
             />
 
@@ -599,8 +478,6 @@ const App: React.FC = () => {
                     isBuffer={actionMenu.isBuffer}
                 />
             )}
-            
-            <DragOverlay dragState={crossGridDragState} />
         </div>
     );
 };

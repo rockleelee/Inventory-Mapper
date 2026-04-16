@@ -7,6 +7,7 @@ export interface CellData {
     code3: string;     // Material Code 3 (optional, e.g., "PIM")
     quantity: number;
     note: string;
+    isBoundary?: boolean;    // Indicates if this cell acts purely as a visual boundary marker
     // Color is derived from code1, NOT stored
     calcHistory?: string[];  // Calculation steps e.g. ["4000", "+2000", "+500", "=6500"]
     imageId?: string;        // Reference to image stored in IndexedDB
@@ -18,30 +19,6 @@ export interface GridPosition {
     col: number;
 }
 
-// Viewport state for pan/zoom
-export interface ViewportState {
-    offsetX: number;
-    offsetY: number;
-    scale: number;
-}
-
-// Touch/pointer tracking
-export interface PointerData {
-    id: number;
-    x: number;
-    y: number;
-    startX: number;
-    startY: number;
-    startTime: number;
-}
-
-// Gesture state
-export type GestureState =
-    | 'idle'
-    | 'panning'
-    | 'zooming'
-    | 'longPress'
-    | 'dragging';
 
 // Material summary for aggregation
 export interface MaterialSummary {
@@ -61,23 +38,6 @@ export interface EditorState {
     col: number;
 }
 
-// Drag state
-export interface DragState {
-    isDragging: boolean;
-    sourceCell: CellData | null;
-    sourceRow: number;
-    sourceCol: number;
-    currentX: number;
-    currentY: number;
-    dropHandled?: boolean;
-}
-
-// Cross-grid drag state for App-level coordination
-export type GridType = 'main' | 'buffer';
-
-export interface CrossGridDragState extends DragState {
-    sourceGrid: GridType | null;
-}
 
 // Grid configuration
 export interface GridConfig {
@@ -91,12 +51,12 @@ export interface GridConfig {
 
 // Default grid configuration
 export const DEFAULT_GRID_CONFIG: GridConfig = {
-    rows: 50,
-    cols: 100,
+    rows: 63,
+    cols: 81,
     cellWidth: 80,
     cellHeight: 40,
-    headerHeight: 30,
-    rowHeaderWidth: 50,
+    headerHeight: 25,
+    rowHeaderWidth: 35,
 };
 
 // Buffer grid configuration (smaller grid for secondary storage)
@@ -187,4 +147,15 @@ export function cellHasContent(cell: CellData | null | undefined): boolean {
 // Generate unique cell key
 export function getCellKey(row: number, col: number): string {
     return `${row}-${col}`;
+}
+
+export type CellType = 'active' | 'blocked' | 'label' | 'boundary' | 'h-spacer';
+
+export interface MapCell {
+    id: string;
+    row: number;
+    col: number;
+    locationCode: string; // The grid mapping cell code
+    type: CellType;
+    labelText?: string;
 }

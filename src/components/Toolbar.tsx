@@ -4,12 +4,16 @@ interface ToolbarProps {
     onClearAll: () => void;
     onExport: () => void;
     onImport: (data: string) => void;
+    isSelectMode: boolean;
+    onToggleSelectMode: () => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
     onClearAll,
     onExport,
     onImport,
+    isSelectMode,
+    onToggleSelectMode,
 }) => {
     const [showMenu, setShowMenu] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -55,7 +59,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 Inventory Mapper
             </div>
 
-            <div className="toolbar-actions">
+            <div className="toolbar-actions" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    <input 
+                        type="checkbox" 
+                        checked={isSelectMode} 
+                        onChange={onToggleSelectMode} 
+                        style={{ cursor: 'pointer' }}
+                    />
+                    Multi-Select
+                </label>
+
                 <button
                     className="menu-btn"
                     onClick={() => setShowMenu(!showMenu)}

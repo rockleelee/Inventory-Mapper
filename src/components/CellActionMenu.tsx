@@ -74,8 +74,8 @@ export const CellActionMenu: React.FC<CellActionMenuProps> = ({
                 disabled={!hasContent}
                 onClick={() => { onMoveToBuffer(); onClose(); }}
             >
-                <span className="cell-action-icon">{isBuffer ? '✂️' : '📦'}</span>
-                {isBuffer ? 'Cut' : 'Move to Buffer'}
+                <span className="cell-action-icon">{isBuffer ? '↖️' : '📦'}</span>
+                {isBuffer ? 'Move to Main Grid' : 'Move to Buffer'}
             </button>
             <button
                 className="cell-action-item"
