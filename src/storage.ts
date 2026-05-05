@@ -243,7 +243,8 @@ export async function exportData(): Promise<string> {
     const db = await getDB();
     const cells = await db.getAll(STORE_NAME);
     const bufferCells = await db.getAll(BUFFER_STORE_NAME);
-    return JSON.stringify({ cells, bufferCells }, null, 2);
+    const images = await db.getAll(IMAGE_STORE_NAME);
+    return JSON.stringify({ cells, bufferCells, images }, null, 2);
 }
 
 // Import from backup
@@ -253,14 +254,16 @@ export async function importData(jsonData: string): Promise<void> {
     // Handle legacy format (array) vs new format (object with cells and bufferCells)
     let rawCells: (LegacyCellData | CellData)[];
     let rawBufferCells: (LegacyCellData | CellData)[] = [];
+    let rawImages: { id: string; dataUrl: string }[] = [];
 
     if (Array.isArray(parsed)) {
         // Legacy format: just an array of cells
         rawCells = parsed;
     } else {
-        // New format: { cells, bufferCells }
+        // New format: { cells, bufferCells, images }
         rawCells = parsed.cells || [];
         rawBufferCells = parsed.bufferCells || [];
+        rawImages = parsed.images || [];
     }
 
     // Migrate and save main cells
@@ -272,5 +275,16 @@ export async function importData(jsonData: string): Promise<void> {
     const bufferCells: CellData[] = rawBufferCells.map((cell: LegacyCellData | CellData) => migrateCellData(cell));
     await clearAllBufferCells();
     await saveBufferCells(bufferCells);
+
+    // Save images
+    const db = await getDB();
+    await db.clear(IMAGE_STORE_NAME);
+    if (rawImages.length > 0) {
+        const tx = db.transaction(IMAGE_STORE_NAME, 'readwrite');
+        await Promise.all([
+            ...rawImages.map(img => tx.store.put(img)),
+            tx.done,
+        ]);
+    }
 }
 

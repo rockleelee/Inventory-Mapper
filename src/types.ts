@@ -8,6 +8,7 @@ export interface CellData {
     quantity: number;
     note: string;
     isBoundary?: boolean;    // Indicates if this cell acts purely as a visual boundary marker
+    isStockHold?: boolean;   // Indicates if this cell is a stock hold (red with stripes, excluded from summary)
     // Color is derived from code1, NOT stored
     calcHistory?: string[];  // Calculation steps e.g. ["4000", "+2000", "+500", "=6500"]
     imageId?: string;        // Reference to image stored in IndexedDB
@@ -53,8 +54,8 @@ export interface GridConfig {
 export const DEFAULT_GRID_CONFIG: GridConfig = {
     rows: 63,
     cols: 81,
-    cellWidth: 80,
-    cellHeight: 40,
+    cellWidth: 120,
+    cellHeight: 60,
     headerHeight: 25,
     rowHeaderWidth: 35,
 };
@@ -63,8 +64,8 @@ export const DEFAULT_GRID_CONFIG: GridConfig = {
 export const BUFFER_GRID_CONFIG: GridConfig = {
     rows: 10,
     cols: 10,
-    cellWidth: 70,
-    cellHeight: 36,
+    cellWidth: 105,
+    cellHeight: 54,
     headerHeight: 24,
     rowHeaderWidth: 40,
 };

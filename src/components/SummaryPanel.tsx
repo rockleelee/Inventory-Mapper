@@ -28,7 +28,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
         const materialMap = new Map<string, MaterialSummary>();
 
         cells.forEach((cell) => {
-            if (cell.isBoundary || !cellHasContent(cell) || !cell.code1) return;
+            if (cell.isBoundary || cell.isStockHold || !cellHasContent(cell) || !cell.code1) return;
 
             const combinedCode = getCombinedCode(cell);
             const existing = materialMap.get(combinedCode);

@@ -8,6 +8,7 @@ interface CellActionMenuProps {
     hasClipboard: boolean;
     hasContent: boolean; // whether source cell has content (for copy/move)
     onMoveToBuffer: () => void;
+    onCut: () => void;
     onCopy: () => void;
     onPaste: () => void;
     onClose: () => void;
@@ -21,6 +22,7 @@ export const CellActionMenu: React.FC<CellActionMenuProps> = ({
     hasClipboard,
     hasContent,
     onMoveToBuffer,
+    onCut,
     onCopy,
     onPaste,
     onClose,
@@ -76,6 +78,14 @@ export const CellActionMenu: React.FC<CellActionMenuProps> = ({
             >
                 <span className="cell-action-icon">{isBuffer ? '↖️' : '📦'}</span>
                 {isBuffer ? 'Move to Main Grid' : 'Move to Buffer'}
+            </button>
+            <button
+                className="cell-action-item"
+                disabled={!hasContent}
+                onClick={() => { onCut(); onClose(); }}
+            >
+                <span className="cell-action-icon">✂️</span>
+                Cut / Move
             </button>
             <button
                 className="cell-action-item"

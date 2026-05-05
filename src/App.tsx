@@ -227,6 +227,38 @@ const App: React.FC = () => {
         mainGridRef.current?.clearSelection();
     }, [actionMenu, cells, bufferCells, getActionCells]);
 
+    const handleActionCut = useCallback(async () => {
+        if (!actionMenu) return;
+        const { row, col, isBuffer } = actionMenu;
+
+        const multiCells = getActionCells(isBuffer);
+        const cellsToCut = multiCells.length > 0 ? multiCells : (() => {
+            const map = isBuffer ? bufferCells : cells;
+            const c = map.get(getCellKey(row, col));
+            return c && cellHasContent(c) ? [c] : [];
+        })();
+
+        if (cellsToCut.length === 0) return;
+
+        clipboardRef.current = cellsToCut.map(c => ({ ...c }));
+        setHasClipboard(true);
+
+        // Remove from source
+        for (const srcCell of cellsToCut) {
+            const srcKey = getCellKey(srcCell.row, srcCell.col);
+            if (isBuffer) {
+                setBufferCells(prev => { const n = new Map(prev); n.delete(srcKey); return n; });
+                try { await deleteBufferCell(srcCell.row, srcCell.col); } catch { /* silent */ }
+            } else {
+                setCells(prev => { const n = new Map(prev); n.delete(srcKey); return n; });
+                try { await deleteCell(srcCell.row, srcCell.col); } catch { /* silent */ }
+            }
+        }
+
+        if (isBuffer) bufferGridRef.current?.clearSelection();
+        else mainGridRef.current?.clearSelection();
+    }, [actionMenu, cells, bufferCells, getActionCells]);
+
     const handleActionMoveToBuffer = useCallback(async () => {
         if (!actionMenu) return;
         const { row, col, isBuffer } = actionMenu;
@@ -472,6 +504,7 @@ const App: React.FC = () => {
                     hasClipboard={hasClipboard}
                     hasContent={actionCellHasContent}
                     onMoveToBuffer={handleActionMoveToBuffer}
+                    onCut={handleActionCut}
                     onCopy={handleActionCopy}
                     onPaste={handleActionPaste}
                     onClose={() => setActionMenu(null)}

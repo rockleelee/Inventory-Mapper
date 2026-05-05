@@ -19,13 +19,7 @@ interface CellEditorProps {
     onClose: () => void;
 }
 
-interface CalculatorState {
-    firstOperand: string;
-    secondOperand: string;
-    operator: '+' | '-' | null;
-    isEnteringSecondOperand: boolean;
-    result: string | null;
-}
+
 
 function generateId(): string {
     return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -45,15 +39,13 @@ export const CellEditor: React.FC<CellEditorProps> = ({
     const [code3, setCode3] = useState('');
     const [note, setNote] = useState('');
     const [isBoundary, setIsBoundary] = useState(false);
+    const [isStockHold, setIsStockHold] = useState(false);
+    const [isReady, setIsReady] = useState(false);
 
     // Calculator state
-    const [calc, setCalc] = useState<CalculatorState>({
-        firstOperand: '0',
-        secondOperand: '',
-        operator: null,
-        isEnteringSecondOperand: false,
-        result: null,
-    });
+    const [expression, setExpression] = useState('');
+    const [currentValue, setCurrentValue] = useState('0');
+    const [lastInputType, setLastInputType] = useState<'number' | 'operator'>('number');
 
     // Calculation history: array of step strings like ["4000", "+2000", "+500", "=6500"]
     const [calcHistory, setCalcHistory] = useState<string[]>([]);
@@ -70,38 +62,36 @@ export const CellEditor: React.FC<CellEditorProps> = ({
     // Initialize form when cell changes
     useEffect(() => {
         if (isOpen) {
+            const timer = setTimeout(() => setIsReady(true), 250);
             if (cell) {
                 setCode1(cell.code1);
                 setCode2(cell.code2);
                 setCode3(cell.code3);
                 setNote(cell.note);
                 setIsBoundary(cell.isBoundary || false);
+                setIsStockHold(cell.isStockHold || false);
                 setCalcHistory(cell.calcHistory || []);
                 setImageId(cell.imageId);
-                setCalc({
-                    firstOperand: cell.quantity > 0 ? String(cell.quantity) : '0',
-                    secondOperand: '',
-                    operator: null,
-                    isEnteringSecondOperand: false,
-                    result: null,
-                });
+                setExpression('');
+                setCurrentValue(cell.quantity > 0 ? String(cell.quantity) : '0');
+                setLastInputType('number');
             } else {
                 setCode1('');
                 setCode2('');
                 setCode3('');
                 setNote('');
                 setIsBoundary(false);
+                setIsStockHold(false);
                 setCalcHistory([]);
                 setImageId(undefined);
                 setImagePreviewUrl(null);
-                setCalc({
-                    firstOperand: '0',
-                    secondOperand: '',
-                    operator: null,
-                    isEnteringSecondOperand: false,
-                    result: null,
-                });
+                setExpression('');
+                setCurrentValue('0');
+                setLastInputType('number');
             }
+            return () => clearTimeout(timer);
+        } else {
+            setIsReady(false);
         }
     }, [isOpen, cell]);
 
@@ -121,36 +111,23 @@ export const CellEditor: React.FC<CellEditorProps> = ({
         });
     }, [imageId]);
 
-    // Build display value showing full expression
-    const getDisplayValue = (): string => {
-        if (calc.result !== null) return calc.result;
-        let display = calc.firstOperand || '0';
-        if (calc.operator) {
-            display += ' ' + calc.operator;
-            if (calc.secondOperand) display += ' ' + calc.secondOperand;
+    function evaluateExpression(expr: string): number {
+        try {
+            const sanitized = expr.replace(/[^0-9+\-.]/g, '');
+            if (!sanitized) return 0;
+            return new Function('return ' + sanitized)() || 0;
+        } catch {
+            return 0;
         }
-        return display;
-    };
-
-    // Get the final quantity value for saving
-    const getFinalQuantity = (): number => {
-        if (calc.result !== null) return parseFloat(calc.result) || 0;
-        if (calc.operator && calc.secondOperand) {
-            const first = parseFloat(calc.firstOperand) || 0;
-            const second = parseFloat(calc.secondOperand) || 0;
-            if (calc.operator === '+') return first + second;
-            if (calc.operator === '-') return first - second;
-        }
-        return parseFloat(calc.firstOperand) || 0;
-    };
+    }
 
     const handleSave = () => {
-        const finalQuantity = getFinalQuantity();
-        // If there's a pending expression, finalize it into history before saving
+        const fullExpr = expression + (currentValue || '0');
+        const finalQuantity = evaluateExpression(fullExpr);
         let finalHistory = [...calcHistory];
-        if (calc.operator && calc.secondOperand && calc.result === null) {
-            const result = finalQuantity;
-            finalHistory = [...finalHistory, `${calc.operator}${calc.secondOperand}`, `=${result}`];
+        
+        if (expression) {
+            finalHistory = [...finalHistory, fullExpr.trim(), `=${finalQuantity}`];
         }
 
         const newCell: CellData = {
@@ -164,6 +141,7 @@ export const CellEditor: React.FC<CellEditorProps> = ({
             calcHistory: finalHistory.length > 0 ? finalHistory : undefined,
             imageId,
             isBoundary,
+            isStockHold,
         };
 
         onSave(newCell);
@@ -179,191 +157,87 @@ export const CellEditor: React.FC<CellEditorProps> = ({
         onClose();
     };
 
-    // Handle typing in the quantity input
     const handleQuantityInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const inputValue = e.target.value;
-        if (calc.result !== null) {
-            const numericOnly = inputValue.replace(/[^0-9.]/g, '');
-            setCalc({
-                firstOperand: numericOnly || '0',
-                secondOperand: '',
-                operator: null,
-                isEnteringSecondOperand: false,
-                result: null,
-            });
-            return;
-        }
-        if (calc.isEnteringSecondOperand) {
-            const parts = inputValue.split(/\s*[+\-]\s*/);
-            const newSecondOperand = parts[parts.length - 1]?.replace(/[^0-9.]/g, '') || '';
-            setCalc(prev => ({ ...prev, secondOperand: newSecondOperand }));
-        } else if (calc.operator) {
-            const parts = inputValue.split(/\s*[+\-]\s*/);
-            const newSecondOperand = parts[parts.length - 1]?.replace(/[^0-9.]/g, '') || '';
-            if (newSecondOperand) {
-                setCalc(prev => ({ ...prev, secondOperand: newSecondOperand, isEnteringSecondOperand: true }));
+        const val = e.target.value;
+        if (val.startsWith(expression)) {
+            const remainder = val.slice(expression.length).replace(/[^0-9.]/g, '');
+            setCurrentValue(remainder);
+            if (remainder === '' && expression !== '') {
+                setLastInputType('operator');
+            } else {
+                setLastInputType('number');
             }
         } else {
-            const numericOnly = inputValue.replace(/[^0-9.]/g, '');
-            setCalc(prev => ({ ...prev, firstOperand: numericOnly || '0' }));
+            setCurrentValue(val.replace(/[^0-9.]/g, ''));
+            setExpression('');
+            setLastInputType('number');
         }
     };
 
-    // Handle operator button press
     const handleOperator = (op: '+' | '-') => {
-        if (calc.result !== null) {
-            // Push result as first entry if history is fresh
-            const newHistory = calcHistory.length === 0
-                ? [calc.result, `${op}`]
-                : [...calcHistory, `${op}`];
-            setCalcHistory(newHistory);
-            setCalc({
-                firstOperand: calc.result,
-                secondOperand: '',
-                operator: op,
-                isEnteringSecondOperand: false,
-                result: null,
-            });
-            return;
-        }
-        if (calc.operator && calc.secondOperand) {
-            const first = parseFloat(calc.firstOperand) || 0;
-            const second = parseFloat(calc.secondOperand) || 0;
-            let result = 0;
-            if (calc.operator === '+') result = first + second;
-            if (calc.operator === '-') result = first - second;
-            setCalcHistory(prev => [...prev, `${calc.operator}${calc.secondOperand}`]);
-            setCalc({
-                firstOperand: String(result),
-                secondOperand: '',
-                operator: op,
-                isEnteringSecondOperand: false,
-                result: null,
-            });
-            return;
-        }
-        // Record first operand in history if not yet
-        if (calcHistory.length === 0) {
-            setCalcHistory([calc.firstOperand]);
-        }
-        setCalc(prev => ({
-            ...prev,
-            operator: op,
-            secondOperand: '',
-            isEnteringSecondOperand: false,
-        }));
+        if (lastInputType === 'operator') return;
+
+        setExpression(prev => prev + (currentValue || '0') + ` ${op} `);
+        setCurrentValue('');
+        setLastInputType('operator');
         quantityInputRef.current?.focus();
     };
 
-    // Handle equals button press
     const handleEquals = () => {
-        if (!calc.operator || !calc.secondOperand) return;
+        if (lastInputType === 'operator') return;
 
-        const first = parseFloat(calc.firstOperand) || 0;
-        const second = parseFloat(calc.secondOperand) || 0;
-        let result = 0;
-        if (calc.operator === '+') result = first + second;
-        else if (calc.operator === '-') result = first - second;
-
-        // Append step + result to history
-        const newHistory = [
-            ...(calcHistory.length === 0 ? [calc.firstOperand] : calcHistory),
-            `${calc.operator}${calc.secondOperand}`,
-            `=${result}`,
-        ];
-        setCalcHistory(newHistory);
-
-        setCalc({
-            firstOperand: String(result),
-            secondOperand: '',
-            operator: null,
-            isEnteringSecondOperand: false,
-            result: String(result),
-        });
-
+        const fullExpr = expression + (currentValue || '0');
+        const result = evaluateExpression(fullExpr);
+        
+        if (expression) {
+            setCalcHistory(prev => [...prev, fullExpr.trim(), `=${result}`]);
+        }
+        
+        setExpression('');
+        setCurrentValue(String(result));
+        setLastInputType('number');
         quantityInputRef.current?.focus();
     };
 
-    // Handle quick number buttons
     const handleQuickNumber = (num: string) => {
-        if (calc.result !== null) {
-            setCalc({
-                firstOperand: num,
-                secondOperand: '',
-                operator: null,
-                isEnteringSecondOperand: false,
-                result: null,
-            });
-            setCalcHistory([]);
-            quantityInputRef.current?.focus();
-            return;
+        if (lastInputType === 'operator') {
+            setCurrentValue(num);
+            setLastInputType('number');
+        } else {
+            if (currentValue === '0' || currentValue === '') {
+                setCurrentValue(num);
+            } else {
+                setExpression(prev => prev + currentValue + ' + ');
+                setCurrentValue(num);
+            }
+            setLastInputType('number');
         }
-        if (calc.operator) {
-            setCalc(prev => ({ ...prev, secondOperand: num, isEnteringSecondOperand: true }));
-            quantityInputRef.current?.focus();
-            return;
-        }
-        setCalc({
-            firstOperand: num,
-            secondOperand: '',
-            operator: null,
-            isEnteringSecondOperand: false,
-            result: null,
-        });
-        setCalcHistory([]);
         quantityInputRef.current?.focus();
     };
 
-    // Handle keydown
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        const key = e.key;
-        if (key === '+' || key === '-') {
-            e.preventDefault();
-            handleOperator(key as '+' | '-');
-            return;
-        }
-        if (key === '=' || key === 'Enter') {
+        if (e.key === 'Enter' || e.key === '=') {
             e.preventDefault();
             handleEquals();
-            return;
-        }
-        if (!/^[0-9.]$/.test(key) &&
-            !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(key)) {
+        } else if (e.key === '+' || e.key === '-') {
             e.preventDefault();
-            return;
-        }
-        if (calc.result !== null && /^[0-9.]$/.test(key)) {
-            e.preventDefault();
-            setCalc({
-                firstOperand: key === '.' ? '0.' : key,
-                secondOperand: '',
-                operator: null,
-                isEnteringSecondOperand: false,
-                result: null,
-            });
-            setCalcHistory([]);
-            return;
-        }
-        if (calc.operator && !calc.isEnteringSecondOperand && /^[0-9.]$/.test(key)) {
-            e.preventDefault();
-            setCalc(prev => ({
-                ...prev,
-                secondOperand: key === '.' ? '0.' : key,
-                isEnteringSecondOperand: true,
-            }));
-            return;
-        }
-        if (/^[0-9.]$/.test(key)) {
-            e.preventDefault();
-            if (calc.isEnteringSecondOperand) {
-                setCalc(prev => ({ ...prev, secondOperand: prev.secondOperand + key }));
-            } else {
-                setCalc(prev => ({
-                    ...prev,
-                    firstOperand: prev.firstOperand === '0' && key !== '.'
-                        ? key
-                        : prev.firstOperand + key,
-                }));
+            handleOperator(e.key as '+' | '-');
+        } else if (e.key === 'Backspace') {
+            if (currentValue === '' && expression !== '') {
+                e.preventDefault();
+                const parts = expression.trim().split(/\s+/);
+                if (parts.length >= 2) {
+                    parts.pop(); // remove operator
+                    const val = parts.pop(); // get value
+                    const newExpr = parts.length > 0 ? parts.join(' ') + ' ' : '';
+                    setExpression(newExpr);
+                    setCurrentValue(val || '');
+                    setLastInputType('number');
+                } else {
+                    setExpression('');
+                    setCurrentValue(parts[0] || '');
+                    setLastInputType('number');
+                }
             }
         }
     };
@@ -414,7 +288,7 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                     </div>
                 </div>
 
-                <div className="editor-content">
+                <div className="editor-content" style={{ pointerEvents: isReady ? 'auto' : 'none' }}>
                     {/* Material Code Section */}
                     <div className="form-group">
                         <label>MATERIAL CODE</label>
@@ -484,7 +358,7 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                                 type="text"
                                 inputMode="numeric"
                                 enterKeyHint="done"
-                                value={getDisplayValue()}
+                                value={expression + currentValue}
                                 onChange={handleQuantityInput}
                                 onKeyDown={handleKeyDown}
                                 placeholder="0"
@@ -520,13 +394,9 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                                     type="button"
                                     onClick={() => {
                                         setCalcHistory([]);
-                                        setCalc({
-                                            firstOperand: '0',
-                                            secondOperand: '',
-                                            operator: null,
-                                            isEnteringSecondOperand: false,
-                                            result: null,
-                                        });
+                                        setExpression('');
+                                        setCurrentValue('0');
+                                        setLastInputType('number');
                                     }}
                                 >
                                     Clear
@@ -547,8 +417,8 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                         />
                     </div>
 
-                    {/* Boundary Marker Section */}
-                    <div className="form-group checkbox-section">
+                    {/* Boundary & Stock Hold Marker Section */}
+                    <div className="form-group checkbox-section" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', textTransform: 'none', letterSpacing: 'normal', color: 'var(--text-primary)', fontSize: 'var(--font-size-md)' }}>
                             <input
                                 type="checkbox"
@@ -557,6 +427,15 @@ export const CellEditor: React.FC<CellEditorProps> = ({
                                 style={{ width: '18px', height: '18px', cursor: 'pointer', margin: 0 }}
                             />
                             Mark as Boundary / Divider Cell
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', textTransform: 'none', letterSpacing: 'normal', color: 'var(--text-primary)', fontSize: 'var(--font-size-md)' }}>
+                            <input
+                                type="checkbox"
+                                checked={isStockHold}
+                                onChange={(e) => setIsStockHold(e.target.checked)}
+                                style={{ width: '18px', height: '18px', cursor: 'pointer', margin: 0 }}
+                            />
+                            Mark as Stock Hold Cell
                         </label>
                     </div>
 

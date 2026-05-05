@@ -32,7 +32,7 @@ const GridCell = memo(({
     
     return (
         <div 
-            className={`grid-cell ${hasContent ? 'has-content' : ''} ${isSelected ? 'selected' : ''} ${isHighlighted ? 'highlighted' : ''} ${isBoundary ? 'boundary-cell' : ''}`}
+            className={`grid-cell ${hasContent ? 'has-content' : ''} ${isSelected ? 'selected' : ''} ${isHighlighted ? 'highlighted' : ''} ${isBoundary ? 'boundary-cell' : ''} ${cell?.isStockHold ? 'stock-hold-cell' : ''}`}
             data-row={row} 
             data-col={col}
             style={{ 
@@ -75,6 +75,7 @@ const GridCell = memo(({
     if (p!.note !== n!.note) return false;
     if (p!.imageId !== n!.imageId) return false;
     if (p!.isBoundary !== n!.isBoundary) return false;
+    if (p!.isStockHold !== n!.isStockHold) return false;
     
     return true;
 });

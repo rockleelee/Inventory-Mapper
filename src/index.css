@@ -256,15 +256,27 @@ body {
 }
 
 .grid-cell.boundary-cell {
-  background-color: var(--bg-tertiary);
+  background-color: yellow;
   background-image: repeating-linear-gradient(
     45deg,
-    transparent,
-    transparent 10px,
-    rgba(0, 0, 0, 0.2) 10px,
-    rgba(0, 0, 0, 0.2) 20px
+    yellow,
+    yellow 10px,
+    black 10px,
+    black 20px
   );
-  border: 1px dashed var(--text-muted);
+  border: none;
+}
+
+.grid-cell.stock-hold-cell {
+  background-color: #f44336;
+  background-image: repeating-linear-gradient(
+    45deg,
+    #f44336,
+    #f44336 10px,
+    black 10px,
+    black 20px
+  );
+  border: none;
 }
 
 .grid-cell.selected {
@@ -295,20 +307,20 @@ body {
 
 .cell-code {
   position: absolute;
-  left: 8px;
+  left: 10px;
   top: 30%;
   transform: translateY(-50%);
   font-weight: bold;
-  font-size: 14px;
+  font-size: 18px;
   white-space: nowrap;
 }
 
 .cell-code3 {
   position: absolute;
-  right: 8px;
+  right: 10px;
   top: 30%;
   transform: translateY(-50%);
-  font-size: 14px;
+  font-size: 16px;
   color: #e8e8e8;
   white-space: nowrap;
 }
@@ -318,7 +330,7 @@ body {
   left: 50%;
   top: 72%;
   transform: translate(-50%, -50%);
-  font-size: 13px;
+  font-size: 16px;
   color: #c0c0c0;
 }
 
