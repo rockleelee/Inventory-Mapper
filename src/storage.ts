@@ -243,48 +243,94 @@ export async function exportData(): Promise<string> {
     const db = await getDB();
     const cells = await db.getAll(STORE_NAME);
     const bufferCells = await db.getAll(BUFFER_STORE_NAME);
-    const images = await db.getAll(IMAGE_STORE_NAME);
-    return JSON.stringify({ cells, bufferCells, images }, null, 2);
+
+    const processCell = async (cell: any) => {
+        if (cell.imageId) {
+            const dataUrl = await loadImage(cell.imageId);
+            if (dataUrl) {
+                const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/);
+                if (match) {
+                    return {
+                        ...cell,
+                        image: {
+                            name: `image_${cell.row}_${cell.col}`,
+                            type: match[1],
+                            data: match[2]
+                        }
+                    };
+                } else {
+                    return { ...cell, image: { dataUrl } };
+                }
+            }
+        }
+        return cell;
+    };
+
+    const exportCells = await Promise.all(cells.map(processCell));
+    const exportBufferCells = await Promise.all(bufferCells.map(processCell));
+
+    return JSON.stringify({ cells: exportCells, bufferCells: exportBufferCells }, null, 2);
 }
 
 // Import from backup
 export async function importData(jsonData: string): Promise<void> {
     const parsed = JSON.parse(jsonData);
 
-    // Handle legacy format (array) vs new format (object with cells and bufferCells)
-    let rawCells: (LegacyCellData | CellData)[];
-    let rawBufferCells: (LegacyCellData | CellData)[] = [];
+    let rawCells: any[];
+    let rawBufferCells: any[] = [];
     let rawImages: { id: string; dataUrl: string }[] = [];
 
     if (Array.isArray(parsed)) {
-        // Legacy format: just an array of cells
         rawCells = parsed;
     } else {
-        // New format: { cells, bufferCells, images }
         rawCells = parsed.cells || [];
         rawBufferCells = parsed.bufferCells || [];
         rawImages = parsed.images || [];
     }
 
-    // Migrate and save main cells
-    const cells: CellData[] = rawCells.map((cell: LegacyCellData | CellData) => migrateCellData(cell));
+    const db = await getDB();
+    const imageTx = db.transaction(IMAGE_STORE_NAME, 'readwrite');
+    const imagePromises: Promise<any>[] = [];
+
+    const extractImage = (raw: any) => {
+        const cell = raw.data ? { ...raw.data } : { ...raw };
+        const imageObj = raw.image || cell.image;
+
+        if (imageObj) {
+            let dataUrl = imageObj.dataUrl;
+            if (!dataUrl && imageObj.data) {
+                dataUrl = `data:${imageObj.type || 'image/jpeg'};base64,${imageObj.data}`;
+            }
+
+            if (dataUrl) {
+                if (!cell.imageId) {
+                    cell.imageId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+                }
+                imagePromises.push(imageTx.store.put({ id: cell.imageId, dataUrl }));
+            }
+            delete cell.image;
+        }
+        return cell;
+    };
+
+    const cells: CellData[] = rawCells.map((raw: any) => migrateCellData(extractImage(raw)));
+    const bufferCells: CellData[] = rawBufferCells.map((raw: any) => migrateCellData(extractImage(raw)));
+
+    if (rawImages.length > 0) {
+        for (const img of rawImages) {
+            imagePromises.push(imageTx.store.put(img));
+        }
+    }
+    
+    if (imagePromises.length > 0) {
+        imagePromises.push(imageTx.done);
+        await Promise.all(imagePromises);
+    }
+
     await clearAllCells();
     await saveCells(cells);
 
-    // Migrate and save buffer cells
-    const bufferCells: CellData[] = rawBufferCells.map((cell: LegacyCellData | CellData) => migrateCellData(cell));
     await clearAllBufferCells();
     await saveBufferCells(bufferCells);
-
-    // Save images
-    const db = await getDB();
-    await db.clear(IMAGE_STORE_NAME);
-    if (rawImages.length > 0) {
-        const tx = db.transaction(IMAGE_STORE_NAME, 'readwrite');
-        await Promise.all([
-            ...rawImages.map(img => tx.store.put(img)),
-            tx.done,
-        ]);
-    }
 }
 
